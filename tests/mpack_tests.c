@@ -7,13 +7,15 @@
  * Wired into CTest as the "mpack" suite.
  */
 
+#if defined(_WIN32)
+# define _USE_MATH_DEFINES /* must precede <math.h> for M_PI on MSVC */
+#endif
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #if defined(_WIN32)
-# define _USE_MATH_DEFINES
 # include <windows.h>
 # include <direct.h>
 #else
