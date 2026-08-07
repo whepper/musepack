@@ -35,7 +35,7 @@
 #include <assert.h>
 #include <inttypes.h>
 #include <time.h>
-#include <mpc/mpcdec.h>
+#include <musepack/musepack.h>
 #include <libwaveformat.h>
 #include <getopt.h>
 
@@ -116,11 +116,12 @@ int
 main(int argc, char **argv)
 {
     mpc_reader reader;
-	mpc_demux* demux;
+	musepack_decoder* decoder;
 	mpc_streaminfo si;
-	mpc_status err;
+	musepack_error err;
+	mpc_status reader_err;
 	mpc_bool_t info = MPC_FALSE, is_wav_output = MPC_FALSE, check = MPC_FALSE;
-    MPC_SAMPLE_FORMAT sample_buffer[MPC_DECODER_BUFFER_LENGTH];
+    float sample_buffer[MUSEPACK_FRAME_MAX * 2];
     clock_t begin, end, sum; int total_samples; t_wav_output_file wav_output;
 	int c;
 
@@ -148,18 +149,18 @@ main(int argc, char **argv)
 
 	if (strcmp(argv[optind], "-") == 0) {
 		SET_BINARY_MODE(stdin);
-		err = mpc_reader_init_stdio_stream(& reader, stdin);
+		reader_err = mpc_reader_init_stdio_stream(& reader, stdin);
 	} else
-		err = mpc_reader_init_stdio(&reader, argv[optind]);
-    if(err < 0) return !MPC_STATUS_OK;
+		reader_err = mpc_reader_init_stdio(&reader, argv[optind]);
+    if(reader_err < 0) return !MPC_STATUS_OK;
 
-    demux = mpc_demux_init(&reader);
-    if(!demux) return !MPC_STATUS_OK;
-    mpc_demux_get_info(demux,  &si);
+    decoder = musepack_decoder_open(&reader, &err);
+    if(!decoder) return !MPC_STATUS_OK;
+    musepack_decoder_get_info(decoder, &si);
 
 	if (info == MPC_TRUE) {
 		print_info(&si, argv[optind]);
-		mpc_demux_exit(demux);
+		musepack_decoder_close(decoder);
 		mpc_reader_exit_stdio(&reader);
 		return 0;
 	}
@@ -182,44 +183,54 @@ main(int argc, char **argv)
         if(!err) return !MPC_STATUS_OK;
     }
 
+    if (check) {
+        err = musepack_decoder_check_stream(decoder);
+        if (err != MUSEPACK_OK)
+            fprintf(stderr, "An error occured while decoding\n");
+        else
+            fprintf(stderr, "No error found\n");
+        musepack_decoder_close(decoder);
+        mpc_reader_exit_stdio(&reader);
+        return err == MUSEPACK_OK ? 0 : 1;
+    }
+
     sum = total_samples = 0;
     while(MPC_TRUE)
     {
-        mpc_frame_info frame;
-
-        frame.buffer = sample_buffer;
-	    if (check)
-		    mpc_demux_set_samples_to_skip(demux, MPC_FRAME_LENGTH + MPC_DECODER_SYNTH_DELAY);
+        uint64_t frames;
+        uint64_t max_frames = MUSEPACK_FRAME_MAX;
         begin        = clock();
-        err = mpc_demux_decode(demux, &frame);
+        err = musepack_decoder_read(decoder, sample_buffer, max_frames, &frames);
         end          = clock();
-        if(frame.bits == -1) break;
+        if (err == MUSEPACK_ERR_EOF)
+            break;
+        if (err != MUSEPACK_OK)
+            break;
 
-        total_samples += frame.samples;
+        total_samples += (int) frames;
         sum           += end - begin;
 
 		if(is_wav_output) {
+			uint64_t n = frames * si.channels;
 #ifdef MPC_FIXED_POINT
-			mpc_int16_t tmp_buff[MPC_DECODER_BUFFER_LENGTH];
-			int i;
-			for( i = 0; i < MPC_DECODER_BUFFER_LENGTH; i++) {
-				int tmp = sample_buffer[i] >> MPC_FIXED_POINT_FRACTPART;
-				if (tmp > ((1 << 15) - 1)) tmp = ((1 << 15) - 1);
-				if (tmp < -(1 << 15)) tmp = -(1 << 15);
-				tmp_buff[i] = tmp;
+			mpc_int16_t tmp_buff[MUSEPACK_FRAME_MAX * 2];
+			uint64_t i;
+			for( i = 0; i < n; i++) {
+				float tmp = sample_buffer[i] * 32768.0f;
+				if (tmp > 32767.0f) tmp = 32767.0f;
+				if (tmp < -32768.0f) tmp = -32768.0f;
+				tmp_buff[i] = (mpc_int16_t) tmp;
 			}
-			if(waveformat_output_process_int16(&wav_output, tmp_buff, frame.samples * si.channels) != frame.samples * si.channels)
+			if(waveformat_output_process_int16(&wav_output, tmp_buff, (t_wav_uint32) n) != (t_wav_uint32) n)
 #else
-			if(waveformat_output_process_float32(&wav_output, sample_buffer, frame.samples * si.channels) != frame.samples * si.channels)
+			if(waveformat_output_process_float32(&wav_output, sample_buffer, (t_wav_uint32) n) != (t_wav_uint32) n)
 #endif
                 break;
 		}
     }
 
-	if (err != MPC_STATUS_OK)
+	if (err != MUSEPACK_OK && err != MUSEPACK_ERR_EOF)
 		fprintf(stderr, "An error occured while decoding\n");
-	else if (check)
-		fprintf(stderr, "No error found\n");
 
 	if (!check) {
 		fprintf(stderr, "%u samples ", total_samples);
@@ -232,7 +243,7 @@ main(int argc, char **argv)
 			);
 	}
 
-    mpc_demux_exit(demux);
+    musepack_decoder_close(decoder);
     mpc_reader_exit_stdio(&reader);
     if(is_wav_output)
     {
@@ -244,5 +255,5 @@ main(int argc, char **argv)
     assert(_CrtCheckMemory());
     _CrtDumpMemoryLeaks();
 #endif
-    return err;
+    return err == MUSEPACK_OK || err == MUSEPACK_ERR_EOF ? 0 : 1;
 }
