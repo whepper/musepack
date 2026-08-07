@@ -36,6 +36,7 @@ target_include_directories(musicpack_server
 if(WIN32)
   target_include_directories(musicpack_server PRIVATE
       ${PROJECT_SOURCE_DIR}/win32)
+  target_sources(musicpack_server PRIVATE ${PROJECT_SOURCE_DIR}/win32/dirent.c)
 endif()
 
 target_compile_definitions(musicpack_server PRIVATE

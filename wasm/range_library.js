@@ -24,5 +24,4 @@ var LibraryMusicPackRange = {
   },
 };
 
-autoAddDeps(LibraryMusicPackRange, '$mpc_range_read', '$mpc_range_seek', '$mpc_range_tell');
 mergeInto(LibraryManager.library, LibraryMusicPackRange);

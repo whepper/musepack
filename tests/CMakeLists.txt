@@ -69,6 +69,7 @@ target_include_directories(mpc_server_tests PRIVATE
     ${PROJECT_SOURCE_DIR}/server/vendor/sqlite)
 if(WIN32)
   target_include_directories(mpc_server_tests PRIVATE ${PROJECT_SOURCE_DIR}/win32)
+  target_sources(mpc_server_tests PRIVATE ${PROJECT_SOURCE_DIR}/win32/dirent.c)
 endif()
 if(UNIX AND NOT APPLE)
   target_link_libraries(mpc_server_tests PRIVATE m)
