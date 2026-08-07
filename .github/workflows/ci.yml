@@ -68,7 +68,9 @@ jobs:
         shell: bash
         run: |
           if [ "$RUNNER_OS" = "Windows" ]; then
-            REF_MPCENC="$(cygpath -u "$RUNNER_TEMP")/ref-build/mpcenc/mpcenc.exe"
+            # MSVC multi-config builds place binaries in the config dir.
+            REF_MPCENC="$(cygpath -u "$RUNNER_TEMP")/ref-build/Release/mpcenc/mpcenc.exe"
+            [ -x "$REF_MPCENC" ] || REF_MPCENC="$(cygpath -u "$RUNNER_TEMP")/ref-build/mpcenc/mpcenc.exe"
           else
             REF_MPCENC="$RUNNER_TEMP/ref-build/mpcenc/mpcenc"
           fi
