@@ -1,0 +1,11 @@
+prefix=@CMAKE_INSTALL_PREFIX@
+exec_prefix=${prefix}
+libdir=${exec_prefix}/@CMAKE_INSTALL_LIBDIR@
+includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@
+
+Name: musicpack
+Description: MusicPack package library (.mpack)
+Version: 0.1.0
+Requires: musepack
+Libs: -L${libdir} -lmusicpack
+Cflags: -I${includedir}
