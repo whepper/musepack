@@ -30,12 +30,12 @@ jobs:
 
       # C unit tests run everywhere; the shell-based integration/fuzz/fixture
       # suites (bash + python3) are UNIX-only.
-      - name: Test (unit)
-        run: ctest --test-dir build -C Release -R "^unit$" --output-on-failure
+      - name: Test (unit + mpack)
+        run: ctest --test-dir build -C Release -R "^(unit|mpack)$" --output-on-failure
 
       - name: Test (integration + fuzz + fixtures)
         if: matrix.os != 'windows-latest'
-        run: ctest --test-dir build -C Release -E "^unit$|^compat$" --output-on-failure
+        run: ctest --test-dir build -C Release -E "^unit$|^mpack$|^compat$" --output-on-failure
 
       # Build the pristine reference encoder (05d97a5) and verify the built
       # encoder is byte-identical to it. Runs on all platforms: the live

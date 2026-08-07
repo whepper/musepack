@@ -45,6 +45,22 @@ if(WIN32)
       ENVIRONMENT "PATH=$<TARGET_FILE_DIR:musepack>$<SEMICOLON>$ENV{PATH}")
 endif()
 
+# ---- .mpack / libmusicpack tests ------------------------------------------
+add_executable(mpc_mpack_tests mpack_tests.c)
+target_link_libraries(mpc_mpack_tests PRIVATE musicpack musepack)
+if(UNIX AND NOT APPLE)
+  target_link_libraries(mpc_mpack_tests PRIVATE m)
+endif()
+target_include_directories(mpc_mpack_tests PRIVATE ${PROJECT_SOURCE_DIR}/libmusicpack)
+
+add_test(NAME mpack COMMAND mpc_mpack_tests
+    ${CMAKE_CURRENT_SOURCE_DIR}/reference/test-musicpack-album.mpack
+    ${CMAKE_CURRENT_SOURCE_DIR}/reference/test-flac-album.mpack)
+if(WIN32)
+  set_tests_properties(mpack PROPERTIES
+      ENVIRONMENT "PATH=$<TARGET_FILE_DIR:musepack>$<SEMICOLON>$<TARGET_FILE_DIR:musicpack>$<SEMICOLON>$ENV{PATH}")
+endif()
+
 # ---- shell-based integration / robustness tests (UNIX only) ---------------
 if(UNIX)
     # Fixture regression: decode(fixture.mpc) must equal the golden .wav.
@@ -69,6 +85,20 @@ if(UNIX)
                      ${CMAKE_CURRENT_SOURCE_DIR}/run_fuzz.sh
                      $<TARGET_FILE:mpcdec_cmd>
                      ${_fixture})
+
+    # .mpack integration: reference packages, negative cases, JSON schema.
+    add_test(NAME mpack_integration
+             COMMAND ${CMAKE_COMMAND} -E env
+                     ${CMAKE_CURRENT_SOURCE_DIR}/run_mpack.sh
+                     $<TARGET_FILE:musicpack_cmd>
+                     $<TARGET_FILE:mpc_mpack_tests>)
+
+    # .mpack fuzz-lite: truncated/flipped manifests and path injection.
+    add_test(NAME mpack_fuzz
+             COMMAND ${CMAKE_COMMAND} -E env
+                     ${CMAKE_CURRENT_SOURCE_DIR}/run_mpack_fuzz.sh
+                     $<TARGET_FILE:musicpack_cmd>
+                     ${CMAKE_CURRENT_SOURCE_DIR}/reference/test-musicpack-album.mpack)
 endif()
 
 # ---- Bit-identity with the pristine reference encoder ----------------------
