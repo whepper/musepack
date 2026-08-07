@@ -22,13 +22,20 @@
   <button id="stop" disabled>Stop</button>
 </div>
 
+<div class="row" id="serverrow">
+  <input type="url" id="serverurl" placeholder="http://127.0.0.1:8080" size="28">
+  <button id="loadserver">Load albums from server</button>
+  <select id="trackselect" disabled></select>
+  <span id="serverstatus"></span>
+</div>
+
 <div class="row">
   <input type="range" id="seek" min="0" max="1000" value="0" step="1" disabled>
   <div id="time">0:00 / 0:00</div>
 </div>
 
 <div id="info"></div>
-<div id="status">Choose a .mpc file to begin.</div>
+<div id="status">Choose a .mpc file, or load a track from a musicpack-server.</div>
 
 <script src="main.js"></script>
 </body>

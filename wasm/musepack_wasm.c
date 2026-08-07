@@ -67,6 +67,11 @@ typedef struct {
     int used;
     musepack_decoder *decoder;
     mpc_reader reader;
+    mpc_seek_t size;
+    intptr_t read_fn;  /* JS function indices (Emscripten addFunction) */
+    intptr_t seek_fn;
+    intptr_t tell_fn;
+    int mem_reader;    /* 1 when reader is the mpc_reader_init_memory adapter */
 } wasm_handle;
 
 static wasm_handle handles[WASM_MAX_HANDLES];
@@ -101,11 +106,88 @@ int mpc_wasm_open(int h, const void *data, unsigned int size)
         return MUSEPACK_ERR_INVALID;
     if (hnd->decoder != 0) {
         musepack_decoder_close(hnd->decoder);
-        mpc_reader_exit_memory(&hnd->reader);
+        if (hnd->mem_reader)
+            mpc_reader_exit_memory(&hnd->reader);
         hnd->decoder = 0;
     }
     if (mpc_reader_init_memory(&hnd->reader, data, size) != MPC_STATUS_OK)
         return MUSEPACK_ERR_INVALID;
+    hnd->mem_reader = 1;
+    hnd->decoder = musepack_decoder_open(&hnd->reader, &err);
+    return hnd->decoder != 0 ? MUSEPACK_OK : (int) err;
+}
+
+/* ---- range reader: the decoder's reads go through JS callbacks ---------
+   The JS side owns a virtual file and fulfills read/seek/tell by issuing
+   HTTP Range requests against a musicpack-server. The callbacks may be
+   async; the module is built with ASYNCIFY, so decoder calls that touch the
+   reader return a Promise to JS (await them). Function indices come from
+   Emscripten Module.addFunction(). */
+
+static mpc_int32_t
+js_read(mpc_reader *reader, void *ptr, mpc_int32_t size)
+{
+    wasm_handle *h = (wasm_handle *) reader->data;
+    /* read_fn(ptr:int, size:int) -> int bytes written into wasm memory */
+    return ((mpc_int32_t (*)(mpc_int32_t, mpc_int32_t))
+            (intptr_t) h->read_fn)((mpc_int32_t) (intptr_t) ptr, size);
+}
+
+static mpc_bool_t
+js_seek(mpc_reader *reader, mpc_seek_t offset)
+{
+    wasm_handle *h = (wasm_handle *) reader->data;
+    /* seek_fn(offset:double) -> int (1 ok) */
+    return (mpc_bool_t) ((int (*)(double)) (intptr_t) h->seek_fn)((double) offset);
+}
+
+static mpc_seek_t
+js_tell(mpc_reader *reader)
+{
+    wasm_handle *h = (wasm_handle *) reader->data;
+    /* tell_fn() -> double */
+    return (mpc_seek_t) ((double (*)(void)) (intptr_t) h->tell_fn)();
+}
+
+static mpc_seek_t
+js_size(mpc_reader *reader)
+{
+    wasm_handle *h = (wasm_handle *) reader->data;
+    return h->size;
+}
+
+static mpc_bool_t
+js_canseek(mpc_reader *reader)
+{
+    (void) reader;
+    return MPC_TRUE;
+}
+
+int mpc_wasm_open_range(int h, double size, int read_fn, int seek_fn,
+                        int tell_fn)
+{
+    wasm_handle *hnd = wasm_get_handle(h);
+    musepack_error err = MUSEPACK_OK;
+
+    if (hnd == 0 || size <= 0 || read_fn <= 0 || seek_fn <= 0 || tell_fn <= 0)
+        return MUSEPACK_ERR_INVALID;
+    if (hnd->decoder != 0) {
+        musepack_decoder_close(hnd->decoder);
+        if (hnd->mem_reader)
+            mpc_reader_exit_memory(&hnd->reader);
+        hnd->decoder = 0;
+    }
+    hnd->mem_reader = 0;
+    hnd->size = (mpc_seek_t) size;
+    hnd->read_fn = read_fn;
+    hnd->seek_fn = seek_fn;
+    hnd->tell_fn = tell_fn;
+    hnd->reader.read = js_read;
+    hnd->reader.seek = js_seek;
+    hnd->reader.tell = js_tell;
+    hnd->reader.get_size = js_size;
+    hnd->reader.canseek = js_canseek;
+    hnd->reader.data = hnd;
     hnd->decoder = musepack_decoder_open(&hnd->reader, &err);
     return hnd->decoder != 0 ? MUSEPACK_OK : (int) err;
 }
@@ -209,7 +291,8 @@ void mpc_wasm_destroy(int h)
         return;
     if (hnd->decoder != 0) {
         musepack_decoder_close(hnd->decoder);
-        mpc_reader_exit_memory(&hnd->reader);
+        if (hnd->mem_reader)
+            mpc_reader_exit_memory(&hnd->reader);
         hnd->decoder = 0;
     }
     memset(hnd, 0, sizeof *hnd);

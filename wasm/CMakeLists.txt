@@ -11,12 +11,16 @@ target_link_libraries(musepack_wasm PRIVATE musepack)
 set_target_properties(musepack_wasm PROPERTIES OUTPUT_NAME musepack)
 
 # Single-threaded, no SharedArrayBuffer, no experimental extensions.
+# ASYNCIFY lets the JS-callback range reader block on HTTP Range fetches
+# (mpc_wasm_open_range), so decoder reads/seeks go over the wire.
 target_link_options(musepack_wasm PRIVATE
     "-O3"
     "-sALLOW_MEMORY_GROWTH=1"
     "-sFILESYSTEM=0"
     "-sMODULARIZE=1"
     "-sEXPORT_NAME=createMusepackModule"
-    "-sEXPORTED_FUNCTIONS=_mpc_wasm_create,_mpc_wasm_open,_mpc_wasm_sample_rate,_mpc_wasm_channels,_mpc_wasm_stream_version,_mpc_wasm_length_samples,_mpc_wasm_position,_mpc_wasm_read,_mpc_wasm_seek_sample,_mpc_wasm_seek_seconds,_mpc_wasm_check,_mpc_wasm_destroy,_malloc,_free"
-    "-sEXPORTED_RUNTIME_METHODS=HEAPU8,HEAPF32"
+    "-sASYNCIFY=1"
+    "-sEXPORTED_FUNCTIONS=_mpc_wasm_create,_mpc_wasm_open,_mpc_wasm_open_range,_mpc_wasm_sample_rate,_mpc_wasm_channels,_mpc_wasm_stream_version,_mpc_wasm_length_samples,_mpc_wasm_position,_mpc_wasm_read,_mpc_wasm_seek_sample,_mpc_wasm_seek_seconds,_mpc_wasm_check,_mpc_wasm_destroy,_malloc,_free"
+    "-sEXPORTED_RUNTIME_METHODS=HEAPU8,HEAPF32,addFunction,removeFunction"
+    "-sALLOW_TABLE_GROWTH=1"
     "-sENVIRONMENT=web,worker,node")

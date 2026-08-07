@@ -4,7 +4,8 @@
  * streaming contract so the same {pcm} messages can later feed an
  * AudioWorklet (see audio-worklet.js) without changing the worker.
  *
- *   main -> worker  { type:'open', buffer } | { type:'play' } | { type:'pause' }
+ *   main -> worker  { type:'open', buffer } | { type:'openUrl', url, size }
+ *                   { type:'play' } | { type:'pause' }
  *                   { type:'seek', sample } | { type:'close' }
  *   worker -> main  { type:'info', rate, channels, version, lengthSamples }
  *                   { type:'pcm', samples: Float32Array } | { type:'eos' }
@@ -12,6 +13,7 @@
  */
 
 importScripts('musepack.js');
+importScripts('rangereader.js');
 
 const FRAMES_PER_CHUNK = 8 * 1152; // 8 decoder frames per message
 
@@ -23,6 +25,7 @@ let channels = 2;
 let playing = false;
 let eos = false;
 let pumping = false;
+let rangeFns = null;
 
 function post(msg) { self.postMessage(msg, msg.samples ? [msg.samples.buffer] : undefined); }
 
@@ -39,16 +42,37 @@ async function open(buffer) {
   heapPtr = Module._malloc(buffer.byteLength);
   Module.HEAPU8.set(new Uint8Array(buffer), heapPtr);
 
-  const err = Module._mpc_wasm_open(handle, heapPtr, buffer.byteLength);
+  const err = await Module._mpc_wasm_open(handle, heapPtr, buffer.byteLength);
   if (err !== 0) throw new Error('mpc_wasm_open returned ' + err);
 
-  const rate = Module._mpc_wasm_sample_rate(handle);
-  channels = Module._mpc_wasm_channels(handle);
   pcmPtr = Module._malloc(FRAMES_PER_CHUNK * channels * 4);
+  postInfo();
+}
 
+/* Opens a track served by a musicpack-server over HTTP Range: the decoder's
+   reads/seek go through the JS range callbacks, so playback and seeking
+   exercise the server's Range handling end to end. */
+async function openUrl(url, size) {
+  if (handle >= 0) destroy();
+  handle = Module._mpc_wasm_create();
+  if (handle < 0) throw new Error('mpc_wasm_create failed');
+
+  const reader = new MusicPackRange.RangeReader(url, size);
+  rangeFns = await MusicPackRange.createRangeCallbacks(Module, reader);
+
+  const err = await Module._mpc_wasm_open_range(
+    handle, size, rangeFns.readFn, rangeFns.seekFn, rangeFns.tellFn);
+  if (err !== 0) throw new Error('mpc_wasm_open_range returned ' + err);
+
+  pcmPtr = Module._malloc(FRAMES_PER_CHUNK * channels * 4);
+  postInfo();
+}
+
+function postInfo() {
+  channels = Module._mpc_wasm_channels(handle);
   post({
     type: 'info',
-    rate,
+    rate: Module._mpc_wasm_sample_rate(handle),
     channels,
     version: Module._mpc_wasm_stream_version(handle),
     lengthSamples: Module._mpc_wasm_length_samples(handle),
@@ -61,11 +85,15 @@ function destroy() {
     if (heapPtr) Module._free(heapPtr);
     Module._mpc_wasm_destroy(handle);
   }
+  if (rangeFns) {
+    MusicPackRange.removeRangeCallbacks(Module, rangeFns);
+    rangeFns = null;
+  }
   handle = -1; heapPtr = 0; pcmPtr = 0;
 }
 
-function readChunk() {
-  const frames = Module._mpc_wasm_read(handle, pcmPtr, FRAMES_PER_CHUNK);
+async function readChunk() {
+  const frames = await Module._mpc_wasm_read(handle, pcmPtr, FRAMES_PER_CHUNK);
   if (frames < 0) {
     if (frames === -5) { // MUSEPACK_ERR_EOF
       eos = true;
@@ -84,9 +112,9 @@ function readChunk() {
   post({ type: 'pcm', samples: view.slice() });
 }
 
-function pump() {
+async function pump() {
   if (!playing || eos || handle < 0) { pumping = false; return; }
-  readChunk();
+  await readChunk();
   setTimeout(pump, 0); // keep the worker responsive
 }
 
@@ -98,6 +126,9 @@ self.onmessage = async (ev) => {
       case 'open':
         await open(msg.buffer);
         break;
+      case 'openUrl':
+        await openUrl(msg.url, msg.size);
+        break;
       case 'play':
         playing = true;
         if (!pumping) { pumping = true; pump(); }
@@ -107,7 +138,7 @@ self.onmessage = async (ev) => {
         break;
       case 'seek':
         if (handle >= 0) {
-          Module._mpc_wasm_seek_sample(handle, msg.sample);
+          await Module._mpc_wasm_seek_sample(handle, msg.sample);
           eos = false;
           post({ type: 'seeked', sample: msg.sample });
         }

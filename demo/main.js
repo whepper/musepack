@@ -15,6 +15,10 @@ const seekEl = document.getElementById('seek');
 const timeEl = document.getElementById('time');
 const infoEl = document.getElementById('info');
 const statusEl = document.getElementById('status');
+const serverUrlEl = document.getElementById('serverurl');
+const loadServerBtn = document.getElementById('loadserver');
+const trackSelect = document.getElementById('trackselect');
+const serverStatusEl = document.getElementById('serverstatus');
 
 const worker = new Worker('worker.js');
 
@@ -162,6 +166,69 @@ fileInput.addEventListener('change', async () => {
   playBtn.textContent = 'Play';
   const buffer = await file.arrayBuffer();
   worker.postMessage({ type: 'open', buffer }, [buffer]);
+});
+
+/* ------------------------------------------------------------------ */
+/* musicpack-server streaming (HTTP Range)                             */
+/* ------------------------------------------------------------------ */
+
+async function json(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+loadServerBtn.addEventListener('click', async () => {
+  const base = serverUrlEl.value.replace(/\/+$/, '');
+  if (!base) { serverStatusEl.textContent = 'enter a server URL'; return; }
+  serverStatusEl.textContent = 'loading albums...';
+  trackSelect.innerHTML = '';
+  trackSelect.disabled = true;
+  try {
+    const data = await json(`${base}/api/v1/albums?limit=200`);
+    const tracks = [];
+    for (const album of data.albums) {
+      const detail = await json(`${base}/api/v1/albums/${album.id}`);
+      for (const release of detail.releases) {
+        const rel = await json(`${base}/api/v1/releases/${release.id}`);
+        for (const media of rel.media)
+          for (const track of media.tracks)
+            tracks.push({
+              label: `${album.title} — ${track.title}`,
+              url: `${base}${track.audio.url}`,
+              size: track.audio.size,
+            });
+      }
+    }
+    if (tracks.length === 0) throw new Error('no tracks on server');
+    window.__serverTracks = tracks;
+    for (const t of tracks) {
+      const opt = document.createElement('option');
+      opt.value = String(tracks.indexOf(t));
+      opt.textContent = t.label;
+      trackSelect.appendChild(opt);
+    }
+    trackSelect.disabled = false;
+    serverStatusEl.textContent = `${tracks.length} track(s)`;
+  } catch (e) {
+    serverStatusEl.textContent = 'error: ' + e.message;
+  }
+});
+
+trackSelect.addEventListener('change', async () => {
+  const tracks = window.__serverTracks;
+  if (!tracks || trackSelect.value === '') return;
+  const t = tracks[Number(trackSelect.value)];
+  statusEl.textContent = 'Loading over HTTP Range: ' + t.label + '...';
+  enableButtons(false);
+  infoEl.textContent = '';
+  if (ctx) { await ctx.close(); ctx = null; sink = null; }
+  playing = false;
+  playBtn.textContent = 'Play';
+  // The worker opens the audio URL through the JS range reader, so decoding
+  // and seeking exercise HTTP Range (206) against the server.
+  worker.postMessage({ type: 'openUrl', url: t.url, size: t.size });
+  statusEl.textContent = 'Streaming ' + t.label;
 });
 
 playBtn.addEventListener('click', async () => {

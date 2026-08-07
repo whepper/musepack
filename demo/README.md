@@ -65,6 +65,29 @@ No encoder fixtures ship with the demo; encode any WAV first with the native
 - playback position readout
 - end-of-stream handling (replays from the start on Play)
 
+## Streaming from a musicpack-server (Phase 4)
+
+The demo can play a Musepack track served by `musicpack-server` directly over
+HTTP Range, using the JS-callback range reader (`demo/rangereader.js` +
+`mpc_wasm_open_range`):
+
+```text
+musicpack-server
+     ↓  HTTP Range (206)
+RangeReader (fetch + chunk cache)
+     ↓  libmusepack.wasm (Asyncify-suspended reader calls)
+PCM  →  Web Audio
+```
+
+Enter the server base URL (e.g. `http://127.0.0.1:8080`), press "Load albums
+from server", pick a track, Play. The decoder's reads and seeks issue real
+Range requests, so scrubbing exercises the server's byte-serving. Bytes are
+never transcoded or rewritten; the served file is the original `.mpc`.
+
+The WASM module is built with `-sASYNCIFY` so the decoder can block on the
+async range fetches; decoder calls that touch the reader return a Promise and
+must be awaited (the worker and `smoke.js` do this).
+
 ## Intended architecture (next step)
 
 ```text
