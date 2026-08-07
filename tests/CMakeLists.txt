@@ -39,4 +39,10 @@ if(UNIX)
                      ${CMAKE_CURRENT_SOURCE_DIR}/run_fuzz.sh
                      $<TARGET_FILE:mpcdec_cmd>
                      ${_fixture})
+
+    # Bit-identity with the pristine reference encoder over the synthetic
+    # corpus (tests/reference_manifest.txt, generated from upstream r475).
+    add_test(NAME compat
+             COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/run_compat.sh
+                     $<TARGET_FILE:mpcenc>)
 endif()
