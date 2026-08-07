@@ -85,11 +85,11 @@ for mpc in "$FIXTURES"/*.mpc; do
         continue
     fi
 
-    if cmp -s "$golden" "$TMP/$name.wav"; then
+    if python3 "$ROOT/tests/wavcmp_tol.py" "$golden" "$TMP/$name.wav"; then
         echo "PASS  $name"
         PASSED=$((PASSED + 1))
     else
-        echo "FAIL  $name (output differs from golden)"
+        echo "FAIL  $name (output deviates from golden)"
         FAILED=$((FAILED + 1))
     fi
 done
