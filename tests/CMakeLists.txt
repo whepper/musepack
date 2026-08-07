@@ -15,6 +15,19 @@ if(WIN32)
       ENVIRONMENT "PATH=$<TARGET_FILE_DIR:musepack>$<SEMICOLON>$ENV{PATH}")
 endif()
 
+# ---- stable libmusepack API tests -----------------------------------------
+add_executable(mpc_api_tests api_tests.c)
+target_link_libraries(mpc_api_tests PRIVATE musepack)
+target_include_directories(mpc_api_tests PRIVATE ${PROJECT_SOURCE_DIR}/libmpcdec)
+
+add_test(NAME api COMMAND mpc_api_tests
+    ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/sine44-q5.mpc
+    ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/sine48-q6.mpc)
+if(WIN32)
+  set_tests_properties(api PROPERTIES
+      ENVIRONMENT "PATH=$<TARGET_FILE_DIR:musepack>$<SEMICOLON>$ENV{PATH}")
+endif()
+
 # ---- shell-based integration / robustness tests (UNIX only) ---------------
 if(UNIX)
     # Fixture regression: decode(fixture.mpc) must equal the golden .wav.
