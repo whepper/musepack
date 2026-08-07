@@ -58,7 +58,10 @@ static void test_crc32(void)
 static void test_bits_roundtrip(void)
 {
     mpc_encoder_t enc;
-    mpc_uint8_t buffer[256];
+    /* The bit reader reads up to 4 bytes before its current pointer, so the
+       logical buffer starts 4 bytes into the allocation. */
+    mpc_uint8_t storage[4 + 256];
+    mpc_uint8_t *buffer = storage + 4;
     mpc_bits_reader r;
 
     memset(&enc, 0, sizeof enc);
@@ -93,7 +96,9 @@ static void test_size_roundtrip(void)
     unsigned int j;
 
     for (j = 0; j < sizeof values / sizeof *values; j++) {
-        mpc_uint8_t tmp[10];
+        /* +4 byte headroom for the bit reader's backward reads. */
+        mpc_uint8_t storage[4 + 10];
+        mpc_uint8_t *tmp = storage + 4;
         unsigned int len = encodeSize(values[j], (char *) tmp, MPC_FALSE);
         mpc_bits_reader r;
         mpc_uint64_t out = 0;

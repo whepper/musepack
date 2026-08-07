@@ -95,9 +95,40 @@
 
 #include <mpc/reader.h>
 
+#include <musepack/export.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/// # Reader contract
+///
+///  - `read` returns the number of bytes actually read and 0 only at the end
+///    of available input. Short reads are treated as end-of-available-data by
+///    the decoder. Readers that cannot signal a transport error in-band
+///    should return 0 on failure; the decoder then reports the stream as
+///    truncated (MUSEPACK_ERR_INVALID).
+///  - `seek`/`tell`/`get_size` use 64-bit `mpc_seek_t` positions, safe for
+///    files and slices larger than 4 GiB.
+///  - `get_size` returns 0 when the total size is unknown (e.g. a live
+///    stream). Such a reader should also return MPC_FALSE from `canseek`.
+///  - `canseek` must return MPC_FALSE for non-seekable sources (network
+///    sockets without Range support, pipes). Seeking then fails cleanly with
+///    MUSEPACK_ERR_SEEK.
+///  - All callbacks receive the reader's `data` pointer, so a custom source
+///    (HTTP Range stream, `.mpack` AU slice, browser fetch buffer, iOS/
+///    Android networking) carries its state there. The decoder never touches
+///    `data` beyond passing it through.
+///
+/// # Adapter ownership
+///
+///  - mpc_reader_init_stdio() opens and owns the FILE*; the file is closed by
+///    mpc_reader_exit_stdio().
+///  - mpc_reader_init_stdio_stream() borrows the caller's FILE*, but the
+///    adapter still closes it on exit. Do not fclose() it yourself.
+///  - mpc_reader_init_memory() borrows the caller's buffer: the buffer must
+///    outlive the reader (and any decoder opened on it). The adapter frees
+///    only its own bookkeeping structure on mpc_reader_exit_memory().
 
 /// Initializes a reader over a caller-owned memory buffer.
 ///
@@ -105,14 +136,15 @@ extern "C" {
 /// \param data   buffer contents (must outlive the reader)
 /// \param size   number of valid bytes in \p data
 /// \return MPC_STATUS_OK on success, MPC_STATUS_FAIL otherwise
-MPC_API mpc_status mpc_reader_init_memory(mpc_reader *reader,
-                                          const void *data, mpc_seek_t size);
+MUSEPACK_API mpc_status mpc_reader_init_memory(mpc_reader *reader,
+                                               const void *data,
+                                               mpc_seek_t size);
 
 /// Releases a reader created by mpc_reader_init_memory().
 /// Does not free the user buffer.
 ///
 /// \param reader reader handle to release
-MPC_API void mpc_reader_exit_memory(mpc_reader *reader);
+MUSEPACK_API void mpc_reader_exit_memory(mpc_reader *reader);
 
 #ifdef __cplusplus
 }

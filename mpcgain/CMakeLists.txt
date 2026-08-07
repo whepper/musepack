@@ -22,7 +22,7 @@ target_include_directories(mpcgain PRIVATE
     ${PROJECT_SOURCE_DIR}/include
     ${PROJECT_SOURCE_DIR}/libmpcdec
     ${REPLAY_GAIN_INCLUDE_DIR})
-target_link_libraries(mpcgain PRIVATE mpcdec ${REPLAY_GAIN_LIBRARY})
+target_link_libraries(mpcgain PRIVATE musepack ${REPLAY_GAIN_LIBRARY})
 
 if(NOT MSVC)
   target_link_libraries(mpcgain PRIVATE m)

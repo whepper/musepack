@@ -38,6 +38,17 @@
 #include <mpc/mpc_types.h>
 #include "huffman.h"
 
+/*
+ * Buffer contract: the inline readers below read UP TO FOUR BYTES BEFORE the
+ * reader's current byte pointer (mpc_bits_read reads buff[-1..-4] for wide
+ * fields). A caller creating an mpc_bits_reader must therefore point `buff`
+ * at least 4 bytes past the start of a readable allocation, or the backward
+ * reads run off the beginning of the buffer (undefined behaviour, flagged by
+ * ASan). The demux honors this by embedding its buffer in a larger
+ * zero-initialized struct; the standalone tools and tests pad their local
+ * buffers accordingly.
+ */
+
 #define MAX_ENUM 32
 
 MPC_API int mpc_bits_get_block(mpc_bits_reader * r, mpc_block * p_block);

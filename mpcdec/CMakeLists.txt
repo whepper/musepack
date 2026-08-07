@@ -10,7 +10,7 @@ endif()
 
 add_executable(mpcdec_cmd ${MPCDEC_TOOL_SOURCES})
 target_include_directories(mpcdec_cmd PRIVATE ${MPCDEC_TOOL_INCLUDES})
-target_link_libraries(mpcdec_cmd PRIVATE mpcdec wavformat)
+target_link_libraries(mpcdec_cmd PRIVATE musepack wavformat)
 
 # Historical binary name is "mpcdec" (target is mpcdec_cmd to avoid clashing
 # with the mpcdec library target).

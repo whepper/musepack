@@ -34,16 +34,62 @@
 /// \file streaminfo.h
 /// libmusepack stream information.
 ///
-/// This header re-exports the mpc_streaminfo structure, which describes the
-/// properties of an SV7/SV8 Musepack stream: sample rate, channels, length,
-/// gapless offsets, ReplayGain values and encoder identification. A decoder
-/// opened on a stream exposes these via musepack_decoder_get_info().
+/// Two structures are available:
 ///
-/// See mpc_streaminfo in <mpc/streaminfo.h> for the full field list.
+///  - \ref musepack_stream_info — the modern, versioned structure owned by
+///    this API. New code and bindings should use it.
+///  - `mpc_streaminfo` — the historical structure, re-exported from
+///    <mpc/streaminfo.h> for compatibility. It is returned by the legacy
+///    musepack_decoder_get_info().
 #ifndef MUSEPACK_STREAMINFO_H_
 #define MUSEPACK_STREAMINFO_H_
 #pragma once
 
+#include <stdint.h>
 #include <mpc/streaminfo.h>
 
+#include <musepack/export.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/// Minimum valid value for musepack_stream_info::size. This is the v1
+/// structure size and never shrinks; future versions only append fields.
+#define MUSEPACK_STREAM_INFO_MIN_SIZE ((unsigned int) sizeof(musepack_stream_info))
+
+/// Versioned stream properties structure.
+///
+/// Callers must set `size` to `sizeof(musepack_stream_info)` (or at least
+/// MUSEPACK_STREAM_INFO_MIN_SIZE) before calling
+/// musepack_decoder_get_stream_info(). The library fills at most `size`
+/// bytes, so consumers compiled against an older (smaller) layout keep
+/// working with a newer library; new fields are always appended.
+///
+/// All integer fields use fixed-width types, so the layout is identical on
+/// 32-bit and 64-bit platforms and imports cleanly into Swift/JNI.
+typedef struct musepack_stream_info {
+    mpc_uint32_t size;           ///< IN: sizeof(musepack_stream_info)
+    mpc_uint32_t stream_version; ///< Stream version (7 or 8)
+    mpc_uint32_t sample_rate;    ///< Sample rate in Hz
+    mpc_uint32_t channels;       ///< Channel count (1 or 2)
+    mpc_uint64_t length_samples; ///< Playable frames, excluding leading silence
+    mpc_uint64_t total_samples;  ///< Encoded frames, including beg_silence
+    mpc_uint64_t beg_silence;    ///< Leading silence in frames
+    mpc_uint32_t max_band;       ///< Highest subband index used (0..31)
+    mpc_uint32_t ms;             ///< 1 if mid/side stereo is used
+    mpc_uint32_t block_pwr;      ///< SV8: frames per block = 2^block_pwr (SV7: 0)
+    mpc_uint32_t is_true_gapless;///< 1 if the stream is gapless
+    mpc_uint16_t gain_title;     ///< ReplayGain title gain, dB * 256
+    mpc_uint16_t gain_album;     ///< ReplayGain album gain, dB * 256
+    mpc_uint16_t peak_title;     ///< ReplayGain title peak, dB * 256
+    mpc_uint16_t peak_album;     ///< ReplayGain album peak, dB * 256
+    mpc_uint32_t encoder_version;
+    char encoder[64];            ///< Human-readable encoder identification
+    char profile_name[32];       ///< Quality profile name (fixed buffer, no ptr)
+} musepack_stream_info;
+
+#ifdef __cplusplus
+}
+#endif
 #endif /* MUSEPACK_STREAMINFO_H_ */

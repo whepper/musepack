@@ -11,8 +11,16 @@ if(EMSCRIPTEN)
 endif()
 
 # ---- C unit tests (link against the real libraries) ------------------------
+# The unit suite is white-box: it reaches into private decoder headers, so it
+# links the static variant when a shared library is being built.
+if(MPC_BUILD_SHARED)
+  set(MPC_WHITEBOX_LIB musepack_static)
+else()
+  set(MPC_WHITEBOX_LIB musepack)
+endif()
+
 add_executable(mpc_unit_tests unit_tests.c)
-target_link_libraries(mpc_unit_tests PRIVATE mpcdec mpcenc_static)
+target_link_libraries(mpc_unit_tests PRIVATE ${MPC_WHITEBOX_LIB} mpcenc_static)
 target_include_directories(mpc_unit_tests PRIVATE
     ${PROJECT_SOURCE_DIR}/libmpcdec
     ${PROJECT_SOURCE_DIR}/libmpcenc)

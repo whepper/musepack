@@ -9,6 +9,7 @@
  * Wired into CTest as the "api" suite (see tests/CMakeLists.txt).
  */
 
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -150,6 +151,7 @@ static void test_streaminfo(const char *fixture, unsigned int freq,
     unsigned char *data = load_file(fixture, &sz);
     mpc_reader reader;
     mpc_streaminfo si;
+    musepack_stream_info msi;
     musepack_decoder *d;
     musepack_error err;
 
@@ -165,6 +167,37 @@ static void test_streaminfo(const char *fixture, unsigned int freq,
     CHECK(si.channels == channels, "channels match");
     CHECK(si.stream_version == version, "stream version matches");
     CHECK(musepack_decoder_length_samples(d) == samples, "length samples matches");
+
+    /* versioned structure */
+    memset(&msi, 0, sizeof msi);
+    msi.size = sizeof msi;
+    CHECK(musepack_decoder_get_stream_info(d, &msi) == MUSEPACK_OK,
+          "get_stream_info ok");
+    CHECK(msi.sample_rate == freq, "msi sample_rate matches");
+    CHECK(msi.channels == channels, "msi channels match");
+    CHECK(msi.stream_version == version, "msi stream version matches");
+    CHECK(msi.length_samples == samples, "msi length matches");
+    CHECK(msi.total_samples >= msi.length_samples + msi.beg_silence,
+          "msi sample accounting");
+    CHECK(msi.encoder[0] != '\0', "msi encoder populated");
+    CHECK(msi.profile_name[0] != '\0', "msi profile_name populated");
+
+    /* the size field must meet the v1 floor; leading-field filling keeps
+       older consumers working with a future, larger library */
+    memset(&msi, 0, sizeof msi);
+    msi.size = MUSEPACK_STREAM_INFO_MIN_SIZE;
+    CHECK(musepack_decoder_get_stream_info(d, &msi) == MUSEPACK_OK,
+          "get_stream_info at floor size ok");
+    CHECK(msi.sample_rate == freq, "floor-size msi sample_rate matches");
+    msi.size = MUSEPACK_STREAM_INFO_MIN_SIZE - 1;
+    CHECK(musepack_decoder_get_stream_info(d, &msi) == MUSEPACK_ERR_INVALID,
+          "get_stream_info rejects below-floor size");
+
+    /* accessors */
+    CHECK(musepack_decoder_sample_rate(d) == freq, "sample_rate accessor");
+    CHECK(musepack_decoder_channels(d) == channels, "channels accessor");
+    CHECK(musepack_decoder_stream_version(d) == version, "stream_version accessor");
+    CHECK(strcmp(musepack_version(), MUSEPACK_VERSION) == 0, "version string");
 
     musepack_decoder_close(d);
     mpc_reader_exit_memory(&reader);

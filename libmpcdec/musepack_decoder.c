@@ -38,6 +38,7 @@
 /// interface. No codec logic lives here; it only formalizes lifecycle,
 /// buffered PCM reading, seeking and stream checking for consumers.
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <mpc/mpcdec.h>
@@ -56,6 +57,12 @@ static musepack_error
 mpc_status_to_error(mpc_status s)
 {
     return s == MPC_STATUS_OK ? MUSEPACK_OK : MUSEPACK_ERR_INVALID;
+}
+
+const char *
+musepack_version(void)
+{
+    return MUSEPACK_VERSION;
 }
 
 static musepack_error
@@ -132,12 +139,65 @@ musepack_decoder_close(musepack_decoder *d)
 }
 
 musepack_error
+musepack_decoder_get_stream_info(const musepack_decoder *d, musepack_stream_info *out)
+{
+    musepack_stream_info tmp;
+
+    if (d == 0 || out == 0 || out->size < MUSEPACK_STREAM_INFO_MIN_SIZE)
+        return MUSEPACK_ERR_INVALID;
+
+    memset(&tmp, 0, sizeof tmp);
+    tmp.size             = sizeof tmp;
+    tmp.stream_version   = d->si.stream_version;
+    tmp.sample_rate      = d->si.sample_freq;
+    tmp.channels         = d->si.channels;
+    tmp.length_samples   = musepack_decoder_length_samples(d);
+    tmp.total_samples    = d->si.samples;
+    tmp.beg_silence      = d->si.beg_silence;
+    tmp.max_band         = d->si.max_band;
+    tmp.ms               = d->si.ms;
+    tmp.block_pwr        = d->si.block_pwr;
+    tmp.is_true_gapless  = d->si.is_true_gapless;
+    tmp.gain_title       = d->si.gain_title;
+    tmp.gain_album       = d->si.gain_album;
+    tmp.peak_title       = d->si.peak_title;
+    tmp.peak_album       = d->si.peak_album;
+    tmp.encoder_version  = d->si.encoder_version;
+    snprintf(tmp.encoder, sizeof tmp.encoder, "%s", d->si.encoder);
+    snprintf(tmp.profile_name, sizeof tmp.profile_name, "%s",
+             d->si.profile_name != 0 ? d->si.profile_name : "n.a.");
+
+    /* Consumers compiled against an older, smaller layout receive only the
+       leading fields that fit. */
+    memcpy(out, &tmp, out->size < sizeof tmp ? out->size : sizeof tmp);
+    return MUSEPACK_OK;
+}
+
+musepack_error
 musepack_decoder_get_info(const musepack_decoder *d, mpc_streaminfo *out)
 {
     if (d == 0 || out == 0)
         return MUSEPACK_ERR_INVALID;
     memcpy(out, &d->si, sizeof d->si);
     return MUSEPACK_OK;
+}
+
+uint32_t
+musepack_decoder_stream_version(const musepack_decoder *d)
+{
+    return d == 0 ? 0 : d->si.stream_version;
+}
+
+uint32_t
+musepack_decoder_sample_rate(const musepack_decoder *d)
+{
+    return d == 0 ? 0 : d->si.sample_freq;
+}
+
+uint32_t
+musepack_decoder_channels(const musepack_decoder *d)
+{
+    return d == 0 ? 0 : d->si.channels;
 }
 
 musepack_error
