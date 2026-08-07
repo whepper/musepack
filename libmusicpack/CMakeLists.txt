@@ -15,6 +15,7 @@ set(MUSICPACK_SOURCES
     src/meta/tag.c
     src/meta/vorbis.c
     src/meta/flac.c
+    src/meta/apev2.c
     vendor/cjson/cJSON.c
     vendor/ebur128/ebur128.c)
 

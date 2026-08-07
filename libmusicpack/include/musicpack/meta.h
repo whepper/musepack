@@ -147,6 +147,21 @@ MUSICPACK_API musicpack_status musicpack_vorbis_parse(const unsigned char *data,
 MUSICPACK_API musicpack_status musicpack_vorbis_read(const char *path,
                                                      musicpack_tag_set *out);
 
+/// Reads the APEv2 tag from the end of \p path into \p out. Returns
+/// MUSICPACK_OK with an empty set when the file has no APE tag. Handles
+/// versions 1.000 and 2.000, header+footer and footer-only tags, text
+/// (multi-value NUL-joined), binary and read-only items.
+MUSICPACK_API musicpack_status musicpack_ape_read(const char *path,
+                                                  musicpack_tag_set *out);
+
+/// Writes (or replaces) the APEv2 tag on \p path: the existing tag, if any,
+/// is removed and a header+footer v2.000 tag is appended, preserving the
+/// audio bytes. Repeated keys are stored as NUL-joined text values; binary
+/// items are stored as binary items. An empty \p tags removes any existing
+/// tag. The file is only modified after the tag has been fully built.
+MUSICPACK_API musicpack_status musicpack_ape_write(const char *path,
+                                                   const musicpack_tag_set *tags);
+
 /// Reads the metadata blocks of a FLAC file: the VORBIS_COMMENT block into
 /// \p comments and every PICTURE block into \p pictures. Either may be NULL.
 /// Only metadata is read; audio frames are not touched.

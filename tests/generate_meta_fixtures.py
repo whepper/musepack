@@ -98,6 +98,27 @@ def build_flac(blocks, audio=b"\xff\xf8\x69\x00\x00\x00\x00\x00"):
     return out + audio
 
 
+def ape_tag(items):
+    """Build an APEv2 tag (header + items + footer), v2.000, matching the
+    mutagen/mpcenc byte conventions: footer flag 0x80000000 ("has header"),
+    header flag 0xC0000000, binary item flag 0x2, and a size field that
+    counts items + footer only (the 32-byte header is not included)."""
+    body = b""
+    for key, value, flags in items:
+        body += struct.pack("<2I", len(value), flags) + key.encode("utf-8")
+        body += b"\x00" + value
+    tag_size = 32 + len(body)  # items + footer; header excluded
+    count = len(items)
+    header = (b"APETAGEX" + struct.pack("<3I", 2000, tag_size, count)
+              + struct.pack("<I", 0xC0000000) + b"\x00" * 8)
+    footer = (b"APETAGEX" + struct.pack("<3I", 2000, tag_size, count)
+              + struct.pack("<I", 0x80000000) + b"\x00" * 8)
+    return header + body + footer
+
+
+APE_PAYLOAD = b"AUDIOBYTES" * 10
+
+
 def main():
     outdir = sys.argv[1] if len(sys.argv) > 1 else os.path.join(
         os.path.dirname(os.path.abspath(__file__)), "reference", "meta")
@@ -169,6 +190,27 @@ def main():
 
     with open(os.path.join(outdir, "vorbis-comment.bin"), "wb") as f:
         f.write(comments)
+
+    # --- APEv2 fixtures ------------------------------------------------
+    ape_items = [
+        ("Title", b"Big in Japan", 0),
+        ("Artist", b"Alphaville\x00The Van", 0),   # NUL-joined multi-value
+        ("Album", b"Synthetic Test Album", 0),
+        ("Track", b"3/12", 0),
+        ("MusicBrainz Album Id", b"11111111-2222-3333-4444-555555555555", 0),
+        ("Source", b"Deezer", 0),
+        ("Cover Art (Front)", b"cover.jpg\x00" + png, 2),  # binary item
+        ("CUSTOM", b"survives", 0),
+    ]
+    ape_full = ape_tag(ape_items)
+    with open(os.path.join(outdir, "album-ape.mpc"), "wb") as f:
+        f.write(APE_PAYLOAD + ape_full)
+    with open(os.path.join(outdir, "ape-no-tag.mpc"), "wb") as f:
+        f.write(APE_PAYLOAD)
+    # truncated: payload + header + first item cut mid-value + footer, so the
+    # footer's tag_size no longer matches the file (must be rejected cleanly)
+    with open(os.path.join(outdir, "ape-truncated.mpc"), "wb") as f:
+        f.write(APE_PAYLOAD + ape_full[:52] + ape_full[-32:])
 
     print("generated %s" % outdir)
 

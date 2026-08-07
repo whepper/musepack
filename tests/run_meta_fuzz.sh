@@ -55,4 +55,48 @@ for f in notags.flac bad-magic.flac truncated.flac oversized.flac; do
     run_case "fixture:$f"
 done
 
+# ---- APEv2 reader fuzz ----
+APESRC="$META/album-ape.mpc"
+APELEN=$(wc -c < "$APESRC")
+i=1
+while [ "$i" -le "$APELEN" ]; do
+    head -c "$i" "$APESRC" > "$TMP/cur.mpc" 2>/dev/null
+    "$TESTS" --parse-ape "$TMP/cur.mpc" >/dev/null 2>&1
+    rc=$?
+    if [ "$rc" -ge 128 ]; then
+        echo "CRASH on ape-truncate@$i"
+        exit 1
+    fi
+    PASSED=$((PASSED + 1))
+    i=$((i + 97))
+done
+for k in $(seq 1 20); do
+    python3 - "$APESRC" "$TMP/cur.mpc" "$k" <<'EOF'
+import random, sys
+data = bytearray(open(sys.argv[1], "rb").read())
+rng = random.Random(9000 + int(sys.argv[3]))
+for _ in range(4):
+    i = rng.randrange(len(data))
+    data[i] ^= (1 << rng.randrange(8))
+open(sys.argv[2], "wb").write(bytes(data))
+EOF
+    "$TESTS" --parse-ape "$TMP/cur.mpc" >/dev/null 2>&1
+    rc=$?
+    if [ "$rc" -ge 128 ]; then
+        echo "CRASH on ape-bitflip#$k"
+        exit 1
+    fi
+    PASSED=$((PASSED + 1))
+done
+for f in ape-no-tag.mpc ape-truncated.mpc; do
+    cp "$META/$f" "$TMP/cur.mpc"
+    "$TESTS" --parse-ape "$TMP/cur.mpc" >/dev/null 2>&1
+    rc=$?
+    if [ "$rc" -ge 128 ]; then
+        echo "CRASH on ape-fixture:$f"
+        exit 1
+    fi
+    PASSED=$((PASSED + 1))
+done
+
 echo "meta fuzz: $PASSED cases, no crashes"

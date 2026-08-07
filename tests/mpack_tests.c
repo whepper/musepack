@@ -1083,6 +1083,135 @@ test_flac_negatives(const char *dir)
     musicpack_pictures_free(&p);
 }
 
+static void
+test_ape_read_fixture(const char *dir)
+{
+    char path[1024];
+    musicpack_tag_set s;
+    const musicpack_tag *all[8];
+    const musicpack_tag *cov;
+    size_t n;
+
+    snprintf(path, sizeof path, "%s/album-ape.mpc", dir);
+    CHECK(musicpack_tag_set_init(&s, "test") == MUSICPACK_OK, "init");
+    CHECK(musicpack_ape_read(path, &s) == MUSICPACK_OK, "ape read ok");
+    CHECK(strcmp(musicpack_tag_set_get(&s, "Title")->value, "Big in Japan") == 0,
+          "title");
+    n = musicpack_tag_set_get_all(&s, "Artist", all, 8);
+    CHECK(n == 2, "multi-value artist split");
+    CHECK(n == 2 && strcmp(all[0]->value, "Alphaville") == 0, "artist 1");
+    CHECK(n == 2 && strcmp(all[1]->value, "The Van") == 0, "artist 2");
+    CHECK(strcmp(musicpack_tag_set_get(&s, "Album")->value,
+                 "Synthetic Test Album") == 0, "album");
+    CHECK(strcmp(musicpack_tag_set_get(&s, "Track")->value, "3/12") == 0, "track");
+    CHECK(strcmp(musicpack_tag_set_get(&s, "MusicBrainz Album Id")->value,
+                 "11111111-2222-3333-4444-555555555555") == 0, "mb album id");
+    CHECK(strcmp(musicpack_tag_set_get(&s, "Source")->value, "Deezer") == 0,
+          "source");
+    CHECK(strcmp(musicpack_tag_set_get(&s, "CUSTOM")->value, "survives") == 0,
+          "custom preserved");
+    cov = musicpack_tag_set_get(&s, "Cover Art (Front)");
+    CHECK(cov != 0 && cov->is_binary, "cover art is binary");
+    CHECK(cov != 0 && cov->binary_len >= 12, "cover art has payload");
+    CHECK(cov != 0 && memcmp(cov->binary, "cover.jpg", 9) == 0 &&
+          cov->binary[9] == '\0', "cover filename");
+    CHECK(cov != 0 && cov->binary[10] == 0x89 && cov->binary[11] == 0x50,
+          "png magic preserved");
+    musicpack_tag_set_free(&s);
+
+    snprintf(path, sizeof path, "%s/ape-no-tag.mpc", dir);
+    CHECK(musicpack_tag_set_init(&s, "test") == MUSICPACK_OK, "init");
+    CHECK(musicpack_ape_read(path, &s) == MUSICPACK_OK, "no-tag file ok");
+    CHECK(s.count == 0, "no-tag file yields empty set");
+    musicpack_tag_set_free(&s);
+
+    snprintf(path, sizeof path, "%s/ape-truncated.mpc", dir);
+    CHECK(musicpack_tag_set_init(&s, "test") == MUSICPACK_OK, "init");
+    CHECK(musicpack_ape_read(path, &s) == MUSICPACK_ERR_INVALID,
+          "truncated tag rejected");
+    musicpack_tag_set_free(&s);
+}
+
+static void
+test_ape_write(void)
+{
+    char dir[512];
+    char file[600];
+    FILE *f;
+    static const char payload[] = "AUDIOBYTES";
+    musicpack_tag_set s;
+    const musicpack_tag *all[8];
+    size_t n;
+
+    if (make_temp_dir(dir, sizeof dir) != 0) {
+        CHECK(0, "make temp dir");
+        return;
+    }
+    snprintf(file, sizeof file, "%s/t.bin", dir);
+    f = fopen(file, "wb");
+    CHECK(f != 0, "write payload file");
+    if (f != 0) {
+        fwrite(payload, 1, strlen(payload), f);
+        fclose(f);
+    }
+
+    /* write a tag, read it back */
+    CHECK(musicpack_tag_set_init(&s, "test") == MUSICPACK_OK, "init");
+    CHECK(musicpack_tag_set_add(&s, "Title", "Big in Japan", 12) == MUSICPACK_OK,
+          "add title");
+    CHECK(musicpack_tag_set_add(&s, "Artist", "Alphaville", 10) == MUSICPACK_OK,
+          "add artist1");
+    CHECK(musicpack_tag_set_add(&s, "Artist", "The Van", 7) == MUSICPACK_OK,
+          "add artist2");
+    CHECK(musicpack_ape_write(file, &s) == MUSICPACK_OK, "write tag");
+    musicpack_tag_set_free(&s);
+
+    {
+        char probe[64];
+        size_t got = 0;
+        f = fopen(file, "rb");
+        CHECK(f != 0, "reopen");
+        if (f != 0) {
+            got = fread(probe, 1, strlen(payload), f);
+            fclose(f);
+        }
+        CHECK(got == strlen(payload) && memcmp(probe, payload, strlen(payload)) == 0,
+              "audio bytes preserved");
+    }
+    CHECK(musicpack_tag_set_init(&s, "test") == MUSICPACK_OK, "init");
+    CHECK(musicpack_ape_read(file, &s) == MUSICPACK_OK, "read back");
+    CHECK(strcmp(musicpack_tag_set_get(&s, "Title")->value, "Big in Japan") == 0,
+          "title round-trip");
+    n = musicpack_tag_set_get_all(&s, "Artist", all, 8);
+    CHECK(n == 2 && strcmp(all[0]->value, "Alphaville") == 0 &&
+          strcmp(all[1]->value, "The Van") == 0, "multi-value round-trip");
+    musicpack_tag_set_free(&s);
+
+    /* replace with a different tag */
+    CHECK(musicpack_tag_set_init(&s, "test") == MUSICPACK_OK, "init");
+    CHECK(musicpack_tag_set_add(&s, "Title", "Changed", 7) == MUSICPACK_OK, "add");
+    CHECK(musicpack_ape_write(file, &s) == MUSICPACK_OK, "write replaced tag");
+    musicpack_tag_set_free(&s);
+    CHECK(musicpack_tag_set_init(&s, "test") == MUSICPACK_OK, "init");
+    CHECK(musicpack_ape_read(file, &s) == MUSICPACK_OK, "read replaced");
+    CHECK(s.count == 1, "old tags gone");
+    CHECK(strcmp(musicpack_tag_set_get(&s, "Title")->value, "Changed") == 0,
+          "replacement value");
+    CHECK(musicpack_tag_set_get(&s, "Artist") == 0, "artist removed");
+    musicpack_tag_set_free(&s);
+
+    /* empty write removes the tag */
+    CHECK(musicpack_tag_set_init(&s, "test") == MUSICPACK_OK, "init");
+    CHECK(musicpack_ape_write(file, &s) == MUSICPACK_OK, "write empty removes tag");
+    musicpack_tag_set_free(&s);
+    CHECK(musicpack_tag_set_init(&s, "test") == MUSICPACK_OK, "init");
+    CHECK(musicpack_ape_read(file, &s) == MUSICPACK_OK, "read after removal");
+    CHECK(s.count == 0, "tag removed");
+    musicpack_tag_set_free(&s);
+
+    remove_temp_dir(dir, "t.bin");
+}
+
 /* ------------------------------------------------------------------ */
 /* main                                                                */
 /* ------------------------------------------------------------------ */
@@ -1099,6 +1228,14 @@ int main(int argc, char **argv)
         musicpack_flac_read_metadata(argv[2], &c, &p);
         musicpack_tag_set_free(&c);
         musicpack_pictures_free(&p);
+        return 0;
+    }
+    if (argc >= 3 && strcmp(argv[1], "--parse-ape") == 0) {
+        /* fuzz mode: parse an APEv2 tag; a crash is a signal exit (>=128) */
+        musicpack_tag_set s;
+        musicpack_tag_set_init(&s, "fuzz");
+        musicpack_ape_read(argv[2], &s);
+        musicpack_tag_set_free(&s);
         return 0;
     }
     if (argc < 3) {
@@ -1135,6 +1272,8 @@ int main(int argc, char **argv)
         test_vorbis_read_file(vorbis_path);
         test_flac_metadata(metadir);
         test_flac_negatives(metadir);
+        test_ape_read_fixture(metadir);
+        test_ape_write();
     }
 
     if (failures) {
