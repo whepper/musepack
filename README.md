@@ -49,10 +49,11 @@ cmake --install build
 
 ## Testing
 
-See `tests/README.md`. With `-DMPC_BUILD_TESTS=ON`, `ctest` runs four suites:
+See `tests/README.md`. With `-DMPC_BUILD_TESTS=ON`, `ctest` runs five suites:
 unit tests (crc32, bitstream, tables), a fixture regression that pins decode
-output for bit-exactness, end-to-end integration, and decoder robustness on
-malformed input:
+output for bit-exactness, end-to-end integration, decoder robustness on
+malformed input, and a compatibility manifest that pins the encoder to
+bit-identical output with the pristine reference encoder:
 
 ```sh
 cmake -S . -B build -DMPC_BUILD_TESTS=ON
@@ -68,7 +69,7 @@ ctest --test-dir build
 - `libmpcpsy/` — psychoacoustic model
 - `libwavformat/` — WAV read/write helper
 - `common/` — shared sources (crc32, fast-math tables, tag handling)
-- `tests/` — fixture generator and regression harness
+- `tests/` — fixture generator, corpus generator, and regression harnesses
 - `legacy/` — retired autotools and Visual Studio 2005 build files
 
 ## License

@@ -8,7 +8,7 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-Four suites are run:
+Five suites are run:
 
 | Test            | What it checks                                             |
 |-----------------|------------------------------------------------------------|
@@ -17,10 +17,11 @@ Four suites are run:
 | `fixtures`      | decode(fixture.mpc) == golden .wav (sample-exact)          |
 | `integration`   | end-to-end encode/decode/seek/cut/compare on real files    |
 | `fuzz`          | decoder survives truncated and bit-flipped inputs          |
+| `compat`        | encoder output byte-identical to the reference encoder     |
 
 The `unit` suite is a C program (`unit_tests.c`) and runs on all platforms.
-`fixtures`, `integration`, and `fuzz` are bash/python3 scripts and are
-registered only on UNIX.
+`fixtures`, `integration`, `fuzz`, and `compat` are bash/python3 scripts and
+are registered only on UNIX.
 
 ## Fixture regression harness
 
@@ -71,4 +72,19 @@ compares files with `wavcmp`.
 and bit-flips random bytes, then runs `mpcdec` (decode and `-c`) on each.
 The decoder is expected to reject malformed input gracefully, never crash
 (no signal exit status).
+
+## Reference-encoder compatibility
+
+`run_compat.sh <mpcenc>` regenerates the deterministic corpus from
+`generate_corpus.py`, encodes every WAV at the quality levels pinned in
+`reference_manifest.txt`, and verifies the SHA-256 of each output against
+the manifest. The manifest was produced by the pristine upstream encoder
+(r475 / git `05d97a5`), so a passing `compat` test proves the built encoder
+is byte-identical to the reference.
+
+Note: encoder byte-identity is optimization-dependent (verified at both
+`-O0` and `-O3` against the reference). The manifest is generated from a
+`-O0` reference build, matching the default CMake build type used by the CI
+UNIX test build. Regenerate the manifest from a reference build at the same
+optimization as the encoder under test if you change the build type.
 
