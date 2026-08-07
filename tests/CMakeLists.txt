@@ -12,7 +12,7 @@ add_test(NAME unit COMMAND mpc_unit_tests)
 if(WIN32)
   # The shared libmpcdec DLL must be findable at runtime.
   set_tests_properties(unit PROPERTIES
-      ENVIRONMENT "PATH=$<TARGET_FILE_DIR:mpcdec>$<SEMICOLON>$ENV{PATH}")
+      ENVIRONMENT "PATH=$<TARGET_FILE_DIR:musepack>$<SEMICOLON>$ENV{PATH}")
 endif()
 
 # ---- shell-based integration / robustness tests (UNIX only) ---------------
