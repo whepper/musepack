@@ -23,6 +23,7 @@
 
 #include "libmpcenc.h"
 #include <mpc/minimax.h>
+#include "../common/fileio.h"
 
 void Klemm ( void );
 void Init_Skalenfaktoren ( void );
@@ -382,9 +383,9 @@ writeBitstream_SV8 ( mpc_encoder_t* e, int MaxBand)
 	}
 
 	e->framesInBlock++;
-	if (e->framesInBlock == (1 << e->frames_per_block_pwr)) {
+	if (e->framesInBlock == (mpc_uint_t) (1 << e->frames_per_block_pwr)) {
 		if ((e->block_cnt & ((1 << e->seek_pwr) - 1)) == 0) {
-			e->seek_table[e->seek_pos] = ftello(e->outputFile);
+			e->seek_table[e->seek_pos] = mpc_file_tell(e->outputFile);
 			e->seek_pos++;
 		}
 		e->block_cnt++;

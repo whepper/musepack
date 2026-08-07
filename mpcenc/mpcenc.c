@@ -26,6 +26,7 @@
 
 #include "mpcenc.h"
 #include <mpc/mpcmath.h>
+#include "../common/fileio.h"
 
 /* G L O B A L  V A R I A B L E S */
 
@@ -1628,7 +1629,7 @@ mainloop ( int argc, char** argv )
     }
 
 	e.MS_Channelmode = m.MS_Channelmode;
-	e.seek_ref = ftello(e.outputFile);
+	e.seek_ref = mpc_file_tell(e.outputFile);
 	writeMagic(&e);
 	writeStreamInfo ( &e, m.Max_Band, m.MS_Channelmode > 0, SamplesInWAVE, 0,
 					   m.SampleFreq, Wave.Channels > 2 ? 2 : Wave.Channels);
@@ -1640,7 +1641,7 @@ mainloop ( int argc, char** argv )
 		writeBlock(&e, "EI", MPC_FALSE, 0);
 	}
 	if (NoSeekTable == 0) {
-		e.seek_ptr = ftello(e.outputFile);
+		e.seek_ptr = mpc_file_tell(e.outputFile);
 		writeBits (&e, 0, 16);
 		writeBits (&e, 0, 24); // jump 40 bits for seek table pointer
 		writeBlock(&e, "SO", MPC_FALSE, 0); // reserve space for seek offset
@@ -1746,7 +1747,7 @@ mainloop ( int argc, char** argv )
     // write the last incomplete block
 	if (e.framesInBlock != 0) {
 		if ((e.block_cnt & ((1 << e.seek_pwr) - 1)) == 0) {
-			e.seek_table[e.seek_pos] = ftello(e.outputFile);
+			e.seek_table[e.seek_pos] = mpc_file_tell(e.outputFile);
 			e.seek_pos++;
 		}
 		e.block_cnt++;
@@ -1759,11 +1760,11 @@ mainloop ( int argc, char** argv )
 	writeBlock(&e, "SE", MPC_FALSE, 0); // write end of stream block
 
 	if (Wave.PCMSamples != AllSamplesRead) {
-		fseeko(e.outputFile, (off_t) (e.seek_ref + 4), SEEK_SET);
+		mpc_file_seek(e.outputFile, e.seek_ref + 4, SEEK_SET);
 		writeStreamInfo ( &e, m.Max_Band, m.MS_Channelmode > 0, SamplesInWAVE, 0,
 						   m.SampleFreq, Wave.Channels > 2 ? 2 : Wave.Channels);
 		writeBlock(&e, "SH", MPC_TRUE, si_size);
-		fseeko(e.outputFile, 0, SEEK_END);
+		mpc_file_seek(e.outputFile, 0, SEEK_END);
 	}
 
     ShowProgress (&m, SamplesInWAVE, SamplesInWAVE, e.outputBits );

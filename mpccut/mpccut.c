@@ -40,6 +40,7 @@
 #include "../libmpcdec/internal.h"
 #include "../libmpcdec/huffman.h"
 #include "../libmpcdec/mpc_bits_reader.h"
+#include "../common/fileio.h"
 
 #ifdef _MSC_VER
 #define atoll _atoi64
@@ -59,7 +60,7 @@ static void copy_data(FILE * in_file, mpc_seek_t in_file_pos, FILE * out_file, i
 {
 	char buff[512];
 
-	fseeko(in_file, (off_t) in_file_pos, SEEK_SET);
+	mpc_file_seek(in_file, in_file_pos, SEEK_SET);
 
 	while (data_size != 0) {
 		int read_size = data_size < 512 ? data_size : 512;
@@ -158,7 +159,7 @@ int main(int argc, char **argv)
 
 	in_file = fopen(argv[optind], "rb");
 	i = si.header_position + 4;
-	fseeko(in_file, (off_t) i, SEEK_SET);
+	mpc_file_seek(in_file, i, SEEK_SET);
 	fread(buffer, 1, 16, in_file);
 	r.buff = buffer;
 	r.count = 8;
@@ -172,14 +173,14 @@ int main(int argc, char **argv)
 		if (memcmp(b.key, "EI", 2) == 0)
 			copy_data(in_file, i, e.outputFile, b.size + size);
 		i += b.size + size;
-		fseeko(in_file, (off_t) i, SEEK_SET);
+		mpc_file_seek(in_file, i, SEEK_SET);
 		fread(buffer, 1, 16, in_file);
 		r.buff = buffer;
 		r.count = 8;
 		size = mpc_bits_get_block(&r, &b);
 	}
 
-	e.seek_ptr = ftello(e.outputFile);
+	e.seek_ptr = mpc_file_tell(e.outputFile);
 	writeBits (&e, 0, 16);
 	writeBits (&e, 0, 24); // jump 40 bits for seek table pointer
 	writeBlock(&e, "SO", MPC_FALSE, 0); // reserve space for seek offset
@@ -193,7 +194,7 @@ int main(int argc, char **argv)
 		if (memcmp(b.key, "AP", 2) == 0)
 			start_block--;
 		i += b.size + size;
-		fseeko(in_file, (off_t) i, SEEK_SET);
+		mpc_file_seek(in_file, i, SEEK_SET);
 		fread(buffer, 1, 16, in_file);
 		r.buff = buffer;
 		r.count = 8;
@@ -207,7 +208,7 @@ int main(int argc, char **argv)
 		}
 		if (memcmp(b.key, "AP", 2) == 0) {
 			if ((e.block_cnt & ((1 << e.seek_pwr) - 1)) == 0) {
-				e.seek_table[e.seek_pos] = ftello(e.outputFile);
+				e.seek_table[e.seek_pos] = mpc_file_tell(e.outputFile);
 				e.seek_pos++;
 			}
 			e.block_cnt++;
@@ -215,7 +216,7 @@ int main(int argc, char **argv)
 			block_num--;
 		}
 		i += b.size + size;
-		fseeko(in_file, (off_t) i, SEEK_SET);
+		mpc_file_seek(in_file, i, SEEK_SET);
 		fread(buffer, 1, 16, in_file);
 		r.buff = buffer;
 		r.count = 8;

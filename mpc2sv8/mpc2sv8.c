@@ -43,6 +43,7 @@
 #include "../libmpcdec/decoder.h"
 #include "../libmpcdec/internal.h"
 #include "../libmpcenc/libmpcenc.h"
+#include "../common/fileio.h"
 
 #define TMP_BUF_SIZE 128
 
@@ -143,7 +144,7 @@ int convert(char * sv7file, char * sv8file)
 	}
 
 	// stream conversion
-	e.seek_ref = ftello(e.outputFile);
+	e.seek_ref = mpc_file_tell(e.outputFile);
 	writeMagic(&e);
 	writeStreamInfo( &e, si.max_band, si.ms > 0, si.samples, 0, si.sample_freq,
 	                 si.channels);
@@ -153,7 +154,7 @@ int convert(char * sv7file, char * sv8file)
 	writeEncoderInfo(&e, si.profile, si.pns, si.encoder_version / 100,
 	                 si.encoder_version % 100, 0);
 	writeBlock(&e, "EI", MPC_FALSE, 0);
-	e.seek_ptr = ftello(e.outputFile);
+	e.seek_ptr = mpc_file_tell(e.outputFile);
 	writeBits (&e, 0, 16);
 	writeBits (&e, 0, 24); // jump 40 bits for seek table pointer
 	writeBlock(&e, "SO", MPC_FALSE, 0); // reserve space for seek offset
@@ -176,7 +177,7 @@ int convert(char * sv7file, char * sv8file)
     // write the last incomplete block
 	if (e.framesInBlock != 0) {
 		if ((e.block_cnt & ((1 << e.seek_pwr) - 1)) == 0) {
-			e.seek_table[e.seek_pos] = ftello(e.outputFile);
+			e.seek_table[e.seek_pos] = mpc_file_tell(e.outputFile);
 			e.seek_pos++;
 		}
 		e.block_cnt++;
@@ -186,17 +187,17 @@ int convert(char * sv7file, char * sv8file)
 	writeBlock(&e, "ST", MPC_FALSE, 0); // write seek table block
 	writeBlock(&e, "SE", MPC_FALSE, 0); // write end of stream block
 	if (demux->d->samples != si.samples) {
-		fseeko(e.outputFile, (off_t) (e.seek_ref + 4), SEEK_SET);
+		mpc_file_seek(e.outputFile, e.seek_ref + 4, SEEK_SET);
 		writeStreamInfo( &e, si.max_band, si.ms > 0, demux->d->samples, 0,
 		                 si.sample_freq, si.channels);
 		writeBlock(&e, "SH", MPC_TRUE, si_size);
-		fseeko(e.outputFile, 0, SEEK_END);
+		mpc_file_seek(e.outputFile, 0, SEEK_END);
 	}
 
 	// copy end of file
 
 	stream_size = (((mpc_demux_pos(demux) + 7 - 20) >> 3) - si.header_position + 3) & ~3;
-	fseeko(in_file, (off_t) (si.header_position + stream_size), SEEK_SET);
+	mpc_file_seek(in_file, si.header_position + stream_size, SEEK_SET);
 	while((r_size = fread(buf, 1, TMP_BUF_SIZE, in_file))) {
 		if (fwrite(buf, 1, r_size, e.outputFile) != r_size) {
 			fprintf(stderr, "Error writing to target file");

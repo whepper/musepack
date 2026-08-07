@@ -680,7 +680,7 @@ addtag ( const char*           key,             // the item key
 {
     unsigned char*  p;
     unsigned char*  q;
-    char   ch;
+    unsigned char   ch;
     size_t          i;
 #ifdef _WIN32
     const unsigned short*  CP_ptr;

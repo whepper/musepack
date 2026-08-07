@@ -30,6 +30,12 @@ if(NOT MSVC)
   add_compile_options(-Wall -Wextra)
 endif()
 
+# 64-bit file offsets for POSIX builds (needed by common/fileio.h). Must be
+# defined before any system header that pulls in off_t.
+if(NOT WIN32)
+  add_compile_definitions(_FILE_OFFSET_BITS=64)
+endif()
+
 # ---- subdirectories ---------------------------------------------------------
 add_subdirectory(include)
 add_subdirectory(libmpcdec)

@@ -181,15 +181,6 @@ Ruhehoerschwelle ( PsyModel* m,
     }
 }
 
-#ifdef _MSC_VER
-static double
-asinh ( double x )
-{
-    return x >= 0  ?  log (sqrt (x*x+1) + x)  :  -log (sqrt (x*x+1) - x);
-}
-#endif
-
-
 static double
 Freq2Bark ( double Hz )           // Klemm 2002
 {

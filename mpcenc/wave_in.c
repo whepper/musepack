@@ -22,15 +22,8 @@
 #include "mpcenc.h"
 
 #ifdef _WIN32
-
-static int
-init_in ( const int  SampleCount,
-          const int  SampleFreq,
-          const int  Channels,
-          const int  BitsPerSample );
 static size_t
 get_in ( void* DataPtr );
-
 #endif
 
 #define EXT(x)  (0 == strcasecmp (ext, #x))

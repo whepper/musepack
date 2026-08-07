@@ -208,9 +208,9 @@ main(int argc, char **argv)
 				if (tmp < -(1 << 15)) tmp = -(1 << 15);
 				tmp_buff[i] = tmp;
 			}
-			if(waveformat_output_process_int16(&wav_output, tmp_buff, frame.samples * si.channels) < 0)
+			if(waveformat_output_process_int16(&wav_output, tmp_buff, frame.samples * si.channels) != frame.samples * si.channels)
 #else
-			if(waveformat_output_process_float32(&wav_output, sample_buffer, frame.samples * si.channels) < 0)
+			if(waveformat_output_process_float32(&wav_output, sample_buffer, frame.samples * si.channels) != frame.samples * si.channels)
 #endif
                 break;
 		}

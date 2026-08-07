@@ -28,6 +28,7 @@
 #include "libmpcenc.h"
 #include "stdio.h"
 #include "../common/cnk_tables.h"
+#include "../common/fileio.h"
 
 unsigned long mpc_crc32(unsigned char *buf, int len);
 
@@ -39,10 +40,10 @@ static const mpc_uint32_t Cnk[MAX_ENUM / 2][MAX_ENUM] = MPC_CNK_TABLE;
 static const mpc_uint8_t Cnk_len[MAX_ENUM / 2][MAX_ENUM] = MPC_CNK_LEN_TABLE;
 static const mpc_uint32_t Cnk_lost[MAX_ENUM / 2][MAX_ENUM] = MPC_CNK_LOST_TABLE;
 
-static const mpc_uint8_t log2[32] =
+static const mpc_uint8_t mpc_log2[32] =
 { 1, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4, 4, 4, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 6};
 
-static const mpc_uint8_t log2_lost[32] =
+static const mpc_uint8_t mpc_log2_lost[32] =
 { 0, 1, 0, 3, 2, 1, 0, 7, 6, 5, 4, 3, 2, 1, 0, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 31};
 
 void emptyBits(mpc_encoder_t * e)
@@ -111,10 +112,10 @@ void encodeEnum(mpc_encoder_t * e, const mpc_uint32_t bits, const mpc_uint_t N)
 
 void encodeLog(mpc_encoder_t * e, mpc_uint32_t value, mpc_uint32_t max)
 {
-	if (value < log2_lost[max - 1])
-		writeBits(e, value, log2[max - 1] - 1);
+	if (value < mpc_log2_lost[max - 1])
+		writeBits(e, value, mpc_log2[max - 1] - 1);
 	else
-		writeBits(e, value + log2_lost[max - 1], log2[max - 1]);
+		writeBits(e, value + mpc_log2_lost[max - 1], mpc_log2[max - 1]);
 }
 
 void writeMagic(mpc_encoder_t * e)
@@ -186,11 +187,11 @@ void writeSeekTable (mpc_encoder_t * e)
 	mpc_uint8_t tmp[10];
 
 	// write the position to header
-	i = ftello(e->outputFile); // get the seek table position
+	i = mpc_file_tell(e->outputFile); // get the seek table position
 	len = encodeSize(i - e->seek_ptr, (char*)tmp, MPC_FALSE);
-	fseeko(e->outputFile, (off_t) (e->seek_ptr + 3), SEEK_SET);
+	mpc_file_seek(e->outputFile, e->seek_ptr + 3, SEEK_SET);
 	fwrite(tmp, sizeof(mpc_uint8_t), len, e->outputFile);
-	fseeko(e->outputFile, (off_t) i, SEEK_SET);
+	mpc_file_seek(e->outputFile, i, SEEK_SET);
 
 	// write the seek table datas
 	len = encodeSize(e->seek_pos, (char*)tmp, MPC_FALSE);

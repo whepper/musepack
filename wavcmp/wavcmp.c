@@ -119,7 +119,7 @@ main(int argc, char **argv)
 		total_samples += samples[0];
 
 		if(is_wav_output)
-			if(waveformat_output_process_int16(&wav_output, sample_buff[0], samples[0]) < 0)
+			if(waveformat_output_process_int16(&wav_output, sample_buff[0], samples[0]) != samples[0])
 				break;
 	}
 

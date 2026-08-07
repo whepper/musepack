@@ -36,6 +36,7 @@
 #include <mpc/reader.h>
 #include "internal.h"
 #include <stdio.h>
+#include "../common/fileio.h"
 
 #define STDIO_MAGIC ((mpc_int32_t)0xF34B963C) ///< Just a random safe-check value...
 typedef struct mpc_reader_stdio_t {
@@ -44,27 +45,6 @@ typedef struct mpc_reader_stdio_t {
     mpc_bool_t  is_seekable;
     mpc_int32_t magic;
 } mpc_reader_stdio;
-
-/// 64-bit fseek/ftell, which handle files larger than 2 GB on all platforms.
-static int
-file_seek(FILE * fp, mpc_seek_t offset, int whence)
-{
-#ifdef _WIN32
-    return _fseeki64(fp, (__int64) offset, whence);
-#else
-    return fseeko(fp, (off_t) offset, whence);
-#endif
-}
-
-static mpc_seek_t
-file_tell(FILE * fp)
-{
-#ifdef _WIN32
-    return (mpc_seek_t) _ftelli64(fp);
-#else
-    return (mpc_seek_t) ftello(fp);
-#endif
-}
 
 /// mpc_reader callback implementations
 static mpc_int32_t
@@ -80,7 +60,7 @@ seek_stdio(mpc_reader *p_reader, mpc_seek_t offset)
 {
     mpc_reader_stdio *p_stdio = (mpc_reader_stdio*) p_reader->data;
     if(p_stdio->magic != STDIO_MAGIC) return MPC_FALSE;
-    return p_stdio->is_seekable ? file_seek(p_stdio->p_file, offset, SEEK_SET) == 0 : MPC_FALSE;
+    return p_stdio->is_seekable ? mpc_file_seek(p_stdio->p_file, offset, SEEK_SET) == 0 : MPC_FALSE;
 }
 
 static mpc_seek_t
@@ -88,7 +68,7 @@ tell_stdio(mpc_reader *p_reader)
 {
     mpc_reader_stdio *p_stdio = (mpc_reader_stdio*) p_reader->data;
     if(p_stdio->magic != STDIO_MAGIC) return (mpc_seek_t) MPC_STATUS_FAIL;
-    return file_tell(p_stdio->p_file);
+    return mpc_file_tell(p_stdio->p_file);
 }
 
 static mpc_seek_t
@@ -121,11 +101,11 @@ mpc_reader_init_stdio_stream(mpc_reader * p_reader, FILE * p_file)
     p_stdio->magic  = STDIO_MAGIC;
     p_stdio->p_file = p_file;
     p_stdio->is_seekable = MPC_TRUE;
-    err = file_seek(p_stdio->p_file, 0, SEEK_END);
+    err = mpc_file_seek(p_stdio->p_file, 0, SEEK_END);
     if(err < 0) goto clean;
-    p_stdio->file_size = file_tell(p_stdio->p_file);
+    p_stdio->file_size = mpc_file_tell(p_stdio->p_file);
     if(p_stdio->file_size == (mpc_seek_t) -1) goto clean;
-    err = file_seek(p_stdio->p_file, 0, SEEK_SET);
+    err = mpc_file_seek(p_stdio->p_file, 0, SEEK_SET);
     if(err < 0) goto clean;
 
     tmp_reader.data     = p_stdio;

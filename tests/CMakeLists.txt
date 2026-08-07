@@ -9,6 +9,11 @@ target_include_directories(mpc_unit_tests PRIVATE
     ${PROJECT_SOURCE_DIR}/libmpcenc)
 
 add_test(NAME unit COMMAND mpc_unit_tests)
+if(WIN32)
+  # The shared libmpcdec DLL must be findable at runtime.
+  set_tests_properties(unit PROPERTIES
+      ENVIRONMENT "PATH=$<TARGET_FILE_DIR:mpcdec>$<SEMICOLON>$ENV{PATH}")
+endif()
 
 # ---- shell-based integration / robustness tests (UNIX only) ---------------
 if(UNIX)
