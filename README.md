@@ -70,6 +70,39 @@ with a browser playback demo:
 - WASM: `emcmake cmake -S . -B build-wasm && cmake --build build-wasm`
 - Demo: `demo/README.md` (build, serve, play an `.mpc` in a browser)
 
+## libmusicpack — the `.mpack` package model
+
+`libmusicpack` owns MusicPack package semantics: the `.mpack` v1 manifest,
+album/release/track model, assets, SHA-256 integrity, BS.1770 loudness and
+directory-bundle storage. It depends on `libmusepack` (for the Musepack
+track handoff) but never the reverse. It builds as `libmusicpack`, exported
+as `MusicPack::Package`:
+
+```cmake
+find_package(MusicPack CONFIG REQUIRED)
+target_link_libraries(app PRIVATE MusicPack::Package)
+```
+
+```c
+#include <musicpack/musicpack.h>
+
+musicpack_package *pkg = musicpack_package_open_dir("Album.mpack", 0);
+const musicpack_manifest *m = musicpack_package_manifest(pkg);
+musicpack_report rep;
+musicpack_package_verify(pkg, &rep, 0, 0);
+
+/* Musepack handoff: expose a track's .mpc to the codec layer */
+mpc_reader reader;
+musicpack_package_track_open_reader(pkg, 0, 0, &reader);
+musepack_decoder *d = musepack_decoder_open(&reader, 0);
+```
+
+The `musicpack` CLI (`musicpack info|verify|create|import`) builds, inspects
+and validates directory-form packages. The normative spec and machine-readable
+schema live in `specs/musicpack-v1.md` and `specs/musicpack-v1.schema.json`;
+committed reference packages (a Musepack album and a FLAC album) are under
+`tests/reference/`.
+
 ## Tools
 
 | Tool       | Purpose                                                        |
@@ -84,15 +117,15 @@ with a browser playback demo:
 
 ## Testing
 
-See `tests/README.md`. With `-DMPC_BUILD_TESTS=ON`, `ctest` runs six native
-suites: unit tests (crc32, bitstream, tables), the libmusepack API suite
-(lifecycle, invalid input, memory/file decoding, seeking, multiple
-instances), a fixture regression that pins decode output for bit-exactness,
-end-to-end integration, decoder robustness on malformed input, and a
-compatibility check that pins the encoder to bit-identical output with the
-pristine reference encoder (compared live against a reference build on CI,
-with a committed manifest as the local fallback). The Emscripten build
-registers an additional `wasm_smoke` suite:
+See `tests/README.md`. With `-DMPC_BUILD_TESTS=ON`, `ctest` runs nine native
+suites: unit tests (crc32, bitstream, tables), the libmusepack API suite, the
+libmusicpack suite (manifest, paths, checksums, loudness meter, handoff), a
+fixture regression that pins decode output for bit-exactness, end-to-end
+integration, `.mpack` integration, `.mpack` fuzz-lite, decoder robustness on
+malformed input, and a compatibility check that pins the encoder to
+bit-identical output with the pristine reference encoder (compared live
+against a reference build on CI, with a committed manifest as the local
+fallback). The Emscripten build registers an additional `wasm_smoke` suite:
 
 ```sh
 cmake -S . -B build -DMPC_BUILD_TESTS=ON
@@ -108,8 +141,11 @@ ctest --test-dir build
 - `libmpcenc/` — SV8 encoder core
 - `libmpcpsy/` — psychoacoustic model
 - `libwavformat/` — WAV read/write helper
+- `libmusicpack/` — `.mpack` package library (`libmusicpack`)
+- `musicpack/` — `musicpack` CLI
 - `wasm/` — Emscripten build of the decoder + WASM wrapper + smoke test
 - `demo/` — browser playback proof-of-concept
+- `specs/` — `.mpack` v1 spec + JSON Schema
 - `common/` — shared sources (crc32, fast-math tables, tag handling)
 - `tests/` — fixture generator, corpus generator, and regression harnesses
 - `legacy/` — retired autotools and Visual Studio 2005 build files

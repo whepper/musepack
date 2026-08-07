@@ -27,6 +27,17 @@ builds to WebAssembly (`wasm/`, Emscripten) with a browser demo in `demo/`.
 Library target is `musepack` (output `libmusepack`), exported as
 `Musepack::Decoder`; `mpcdec` remains an in-tree alias.
 
+## Package library (`libmusicpack`)
+
+Since Phase 2, `.mpack` package semantics live in `libmusicpack/` (manifest,
+album/track model, assets, SHA-256, BS.1770 loudness, directory storage),
+exported as `MusicPack::Package`. The `musicpack` CLI (`info`/`verify`/
+`create`/`import`) and the `mpack` CTest suites cover it. The dependency
+direction is one-way: `libmusicpack` may use `libmusepack` (the Musepack
+reader handoff), never the reverse. The normative spec is
+`specs/musicpack-v1.md`; reference packages live in `tests/reference/`.
+`libmusepack` must remain codec-only and package-agnostic.
+
 ## Building
 
 CMake 3.16+. Configure, build, test:
