@@ -104,7 +104,7 @@ static void write_chaps_gain(mpc_demux * demux, const char * file_name,
 	mpc_uint64_t size, dummy;
 	FILE * file;
 	int chap = 0;
-	long next_chap_pos = demux->chap_pos >> 3;
+	long next_chap_pos = mpc_demux_chap_pos(demux) >> 3;
 
 
 	file = fopen( file_name, "r+b");
@@ -182,7 +182,7 @@ int main(int argc, char **argv)
 		chap_nb = mpc_demux_chap_nb(demux);
 		mpc_demux_seek_sample(demux, 0);
 		if (chap_nb > 0) {
-			mpc_chap_info * chap_info = mpc_demux_chap(demux, chap);
+			mpc_chap_info const * chap_info = mpc_demux_chap(demux, chap);
 			next_chap_sample = chap_info->sample;
 			chap_gain = malloc(sizeof(mpc_uint16_t) * 2 * chap_nb);
 			chap_peak = chap_gain + chap_nb;
@@ -215,7 +215,7 @@ int main(int argc, char **argv)
 				i += sample_nb;
 				cur_sample = next_chap_sample;
 				if (chap < chap_nb) {
-					mpc_chap_info * chap_info = mpc_demux_chap(demux, chap);
+					mpc_chap_info const * chap_info = mpc_demux_chap(demux, chap);
 					next_chap_sample = chap_info->sample;
 				} else
 					next_chap_sample = mpc_int64_max;

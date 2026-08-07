@@ -40,7 +40,7 @@
 static const mpc_huffman mpc_table_HuffHdr [10] = {
 {0x8000, 1, 0}, {0x6000, 3, 1}, {0x5e00, 7, -4}, {0x5d80, 9, 3}, {0x5d00, 9, 4}, {0x5c00, 8, -5}, {0x5800, 6, 2}, {0x5000, 5, -3}, {0x4000, 4, -2}, {0x0, 2, -1}
 };
-mpc_lut_data mpc_HuffHdr = {mpc_table_HuffHdr};
+mpc_lut_data mpc_HuffHdr = {mpc_table_HuffHdr, {0}};
 
 const mpc_huffman mpc_table_HuffSCFI [4] = {
 	{0x8000, 1, 1}, {0x6000, 3, 2}, {0x4000, 3, 0}, {0x0, 2, 3}
@@ -49,7 +49,7 @@ const mpc_huffman mpc_table_HuffSCFI [4] = {
 static const mpc_huffman mpc_table_HuffDSCF [16] = {
 	{0xf800, 5, 5}, {0xf000, 5, -4}, {0xe000, 4, 3}, {0xd000, 4, -3}, {0xc000, 4, 8}, {0xa000, 3, 1}, {0x9000, 4, 0}, {0x8800, 5, -5}, {0x8400, 6, 7}, {0x8000, 6, -7}, {0x6000, 3, -1}, {0x4000, 3, 2}, {0x3000, 4, 4}, {0x2800, 5, 6}, {0x2000, 5, -6}, {0x0, 3, -2}
 };
-mpc_lut_data mpc_HuffDSCF = {mpc_table_HuffDSCF};
+mpc_lut_data mpc_HuffDSCF = {mpc_table_HuffDSCF, {0}};
 
 static const mpc_huffman mpc_table_HuffQ1 [2] [27] = {
 	{
@@ -108,13 +108,13 @@ static const mpc_huffman mpc_table_HuffQ7 [2] [63] = {
 };
 
 mpc_lut_data mpc_HuffQ [7] [2] = {
-	{{mpc_table_HuffQ1[0]}, {mpc_table_HuffQ1[1]}},
-	{{mpc_table_HuffQ2[0]}, {mpc_table_HuffQ2[1]}},
-	{{mpc_table_HuffQ3[0]}, {mpc_table_HuffQ3[1]}},
-	{{mpc_table_HuffQ4[0]}, {mpc_table_HuffQ4[1]}},
-	{{mpc_table_HuffQ5[0]}, {mpc_table_HuffQ5[1]}},
-	{{mpc_table_HuffQ6[0]}, {mpc_table_HuffQ6[1]}},
-	{{mpc_table_HuffQ7[0]},	{mpc_table_HuffQ7[1]}}
+	{{mpc_table_HuffQ1[0], {0}}, {mpc_table_HuffQ1[1], {0}}},
+	{{mpc_table_HuffQ2[0], {0}}, {mpc_table_HuffQ2[1], {0}}},
+	{{mpc_table_HuffQ3[0], {0}}, {mpc_table_HuffQ3[1], {0}}},
+	{{mpc_table_HuffQ4[0], {0}}, {mpc_table_HuffQ4[1], {0}}},
+	{{mpc_table_HuffQ5[0], {0}}, {mpc_table_HuffQ5[1], {0}}},
+	{{mpc_table_HuffQ6[0], {0}}, {mpc_table_HuffQ6[1], {0}}},
+	{{mpc_table_HuffQ7[0], {0}}, {mpc_table_HuffQ7[1], {0}}}
 };
 
 
@@ -131,7 +131,7 @@ static const mpc_huffman mpc_huff_SCFI_2 [5] = {
 static const mpc_int8_t mpc_sym_SCFI_2 [16] = {
 	15, 10, 14, 11, 13, 9, 7, 6, 5, 12, 8, 3, 2, 0, 4, 1
 };
-mpc_can_data mpc_can_SCFI[2] = {{mpc_huff_SCFI_1, mpc_sym_SCFI_1}, {mpc_huff_SCFI_2, mpc_sym_SCFI_2}};
+mpc_can_data mpc_can_SCFI[2] = {{mpc_huff_SCFI_1, mpc_sym_SCFI_1, {0}}, {mpc_huff_SCFI_2, mpc_sym_SCFI_2, {0}}};
 
 static const mpc_huffman mpc_huff_DSCF_1 [12] = {
 	{0xa000, 3, 7}, {0x4000, 4, 12}, {0x2800, 5, 16}, {0x1800, 6, 21}, {0xe00, 7, 27}, {0x700, 8, 34}, {0x380, 9, 41}, {0x140, 10, 48}, {0x80, 11, 53}, {0x30, 12, 57}, {0x18, 13, 60}, {0x0, 14, 63}
@@ -145,7 +145,7 @@ static const mpc_huffman mpc_huff_DSCF_2 [13] = {
 static const mpc_int8_t mpc_sym_DSCF_2 [65] = {
 	33, 32, 31, 30, 29, 34, 28, 27, 36, 35, 26, 37, 25, 38, 24, 23, 40, 39, 22, 21, 42, 41, 20, 19, 18, 45, 44, 43, 17, 16, 15, 14, 48, 47, 46, 13, 12, 11, 10, 64, 52, 51, 50, 49, 9, 8, 7, 6, 55, 54, 53, 5, 4, 3, 58, 57, 56, 2, 1, 63, 62, 61, 60, 59, 0
 };
-mpc_can_data mpc_can_DSCF[2] = {{mpc_huff_DSCF_1, mpc_sym_DSCF_1}, {mpc_huff_DSCF_2, mpc_sym_DSCF_2}};
+mpc_can_data mpc_can_DSCF[2] = {{mpc_huff_DSCF_1, mpc_sym_DSCF_1, {0}}, {mpc_huff_DSCF_2, mpc_sym_DSCF_2, {0}}};
 
 static const mpc_huffman mpc_huff_Bands [12] = {
 	{0x8000, 1, 1}, {0x4000, 2, 2}, {0x2000, 3, 3}, {0x1000, 5, 6}, {0x800, 6, 8}, {0x600, 7, 10}, {0x300, 8, 13}, {0x200, 9, 16}, {0x140, 10, 20}, {0xc0, 11, 25}, {0x10, 12, 31}, {0x0, 13, 32}
@@ -153,7 +153,7 @@ static const mpc_huffman mpc_huff_Bands [12] = {
 static const mpc_int8_t mpc_sym_Bands [33] = {
 	0, 32, 1, 31, 2, 30, 3, 4, 29, 6, 5, 28, 7, 27, 26, 8, 25, 24, 23, 9, 22, 21, 20, 18, 17, 16, 15, 14, 12, 11, 10, 19, 13
 };
-mpc_can_data mpc_can_Bands = {mpc_huff_Bands, mpc_sym_Bands};
+mpc_can_data mpc_can_Bands = {mpc_huff_Bands, mpc_sym_Bands, {0}};
 
 static const mpc_huffman mpc_huff_Res_1 [16] = {
 	{0x8000, 1, 1}, {0x4000, 2, 2}, {0x2000, 3, 3}, {0x1000, 4, 4}, {0x800, 5, 5}, {0x400, 6, 6}, {0x200, 7, 7}, {0x100, 8, 8}, {0x80, 9, 9}, {0x40, 10, 10}, {0x20, 11, 11}, {0x10, 12, 12}, {0x8, 13, 13}, {0x4, 14, 14}, {0x2, 15, 15}, {0x0, 16, 16}
@@ -167,7 +167,7 @@ static const mpc_huffman mpc_huff_Res_2 [12] = {
 static const mpc_int8_t mpc_sym_Res_2 [17] = {
 	16, 1, 0, 2, 15, 3, 14, 4, 5, 13, 6, 12, 7, 11, 10, 9, 8
 };
-mpc_can_data mpc_can_Res[2] = {{mpc_huff_Res_1, mpc_sym_Res_1}, {mpc_huff_Res_2, mpc_sym_Res_2}};
+mpc_can_data mpc_can_Res[2] = {{mpc_huff_Res_1, mpc_sym_Res_1, {0}}, {mpc_huff_Res_2, mpc_sym_Res_2, {0}}};
 
 static const mpc_huffman mpc_huff_Q1 [10] = {
 	{0x6000, 3, 7}, {0x1000, 4, 10}, {0x800, 5, 11}, {0x400, 6, 12}, {0x200, 7, 13}, {0x100, 8, 14}, {0x80, 9, 15}, {0x40, 10, 16}, {0x20, 11, 17}, {0x0, 12, 18}
@@ -175,7 +175,7 @@ static const mpc_huffman mpc_huff_Q1 [10] = {
 static const mpc_int8_t mpc_sym_Q1 [19] = {
 	7, 6, 5, 4, 3, 10, 9, 8, 2, 1, 11, 0, 12, 13, 14, 15, 16, 18, 17
 };
-mpc_can_data mpc_can_Q1 = {mpc_huff_Q1, mpc_sym_Q1};
+mpc_can_data mpc_can_Q1 = {mpc_huff_Q1, mpc_sym_Q1, {0}};
 
 static const mpc_huffman mpc_huff_Q2_1 [10] = {
 	{0xe000, 3, 7}, {0x8000, 4, 14}, {0x3c00, 6, 38}, {0x2a00, 7, 53}, {0x1200, 8, 74}, {0x600, 9, 92}, {0x3c0, 10, 104}, {0x60, 11, 119}, {0x20, 12, 122}, {0x0, 13, 124}
@@ -262,16 +262,16 @@ static const mpc_huffman mpc_huff_Q9up [6] = {
 static const mpc_int8_t mpc_sym_Q9up [256] = {
 	-128, 127, -108, -110, -111, -112, -113, -114, -115, -116, -117, -118, -119, -120, -121, -122, -123, -124, -125, -126, -127, 126, 125, 124, 123, 122, 121, 120, 119, 118, 117, 116, 115, 114, 113, 112, 111, 110, 109, 108, -44, -45, -46, -47, -48, -49, -50, -51, -52, -53, -54, -55, -56, -57, -58, -59, -60, -61, -62, -63, -64, -65, -66, -67, -68, -69, -70, -71, -72, -73, -74, -75, -76, -77, -78, -79, -80, -81, -82, -83, -84, -85, -86, -87, -88, -89, -90, -91, -92, -93, -94, -95, -96, -97, -98, -99, -100, -101, -102, -103, -104, -105, -106, -107, -109, 107, 106, 105, 104, 103, 102, 101, 100, 99, 98, 97, 96, 95, 94, 93, 92, 91, 90, 89, 88, 87, 86, 85, 84, 83, 82, 81, 80, 79, 78, 77, 76, 75, 74, 73, 72, 71, 70, 69, 68, 67, 66, 65, 64, 63, 62, 61, 60, 59, 58, 57, 56, 55, 54, 53, 52, 51, 50, 49, 48, 47, 46, 45, 44, 43, 42, 40, 20, 19, -7, -8, -9, -10, -11, -12, -13, -14, -15, -16, -17, -18, -19, -20, -21, -22, -23, -24, -25, -26, -27, -28, -29, -30, -31, -32, -33, -34, -35, -36, -37, -38, -39, -40, -41, -42, -43, 41, 39, 38, 37, 36, 35, 34, 33, 32, 31, 30, 29, 28, 27, 26, 25, 24, 23, 22, 21, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, -3, -4, -5, -6, 4, 3, 2, 1, 0, -1, -2
 };
-mpc_can_data mpc_can_Q9up = {mpc_huff_Q9up, mpc_sym_Q9up};
+mpc_can_data mpc_can_Q9up = {mpc_huff_Q9up, mpc_sym_Q9up, {0}};
 
 
 mpc_can_data mpc_can_Q [6][2] = {
-	{{mpc_huff_Q2_1, mpc_sym_Q2_1}, {mpc_huff_Q2_2, mpc_sym_Q2_2}},
-	{{mpc_huff_Q3, mpc_sym_Q3},     {mpc_huff_Q4, mpc_sym_Q4}},
-	{{mpc_huff_Q5_1, mpc_sym_Q5_1}, {mpc_huff_Q5_2, mpc_sym_Q5_2}},
-	{{mpc_huff_Q6_1, mpc_sym_Q6_1}, {mpc_huff_Q6_2, mpc_sym_Q6_2}},
-	{{mpc_huff_Q7_1, mpc_sym_Q7_1}, {mpc_huff_Q7_2, mpc_sym_Q7_2}},
-	{{mpc_huff_Q8_1, mpc_sym_Q8_1}, {mpc_huff_Q8_2, mpc_sym_Q8_2}}
+	{{mpc_huff_Q2_1, mpc_sym_Q2_1, {0}}, {mpc_huff_Q2_2, mpc_sym_Q2_2, {0}}},
+	{{mpc_huff_Q3, mpc_sym_Q3, {0}},     {mpc_huff_Q4, mpc_sym_Q4, {0}}},
+	{{mpc_huff_Q5_1, mpc_sym_Q5_1, {0}}, {mpc_huff_Q5_2, mpc_sym_Q5_2, {0}}},
+	{{mpc_huff_Q6_1, mpc_sym_Q6_1, {0}}, {mpc_huff_Q6_2, mpc_sym_Q6_2, {0}}},
+	{{mpc_huff_Q7_1, mpc_sym_Q7_1, {0}}, {mpc_huff_Q7_2, mpc_sym_Q7_2, {0}}},
+	{{mpc_huff_Q8_1, mpc_sym_Q8_1, {0}}, {mpc_huff_Q8_2, mpc_sym_Q8_2, {0}}}
 };
 
 static void huff_fill_lut(const mpc_huffman * table, mpc_huff_lut * lut, const int bits)
@@ -330,7 +330,7 @@ static void can_fill_lut(mpc_can_data * data, const int bits)
 	}
 }
 
-void huff_init_lut(const int bits)
+static void huff_build_lut(const int bits)
 {
 	int i, j;
 
@@ -354,5 +354,33 @@ void huff_init_lut(const int bits)
 		}
 	}
 }
+
+#if defined(_WIN32)
+# include <windows.h>
+static INIT_ONCE huff_lut_once = INIT_ONCE_STATIC_INIT;
+static BOOL CALLBACK huff_lut_once_cb(PINIT_ONCE once, PVOID param, PVOID *ctx)
+{
+	(void)once; (void)param; (void)ctx;
+	huff_build_lut(LUT_DEPTH);
+	return TRUE;
+}
+void huff_init_lut(const int bits)
+{
+	(void)bits;
+	InitOnceExecuteOnce(&huff_lut_once, huff_lut_once_cb, NULL, NULL);
+}
+#else
+# include <pthread.h>
+static pthread_once_t huff_lut_once = PTHREAD_ONCE_INIT;
+static void huff_lut_once_cb(void)
+{
+	huff_build_lut(LUT_DEPTH);
+}
+void huff_init_lut(const int bits)
+{
+	(void)bits;
+	pthread_once(&huff_lut_once, huff_lut_once_cb);
+}
+#endif
 
 

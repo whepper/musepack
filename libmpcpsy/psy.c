@@ -78,11 +78,6 @@ extern float  invLtq   [PART_LONG];               // inverse threshold in quiet 
 extern float  fftLtq   [512];                     // threshold in quiet (FFT)
 
 // ans.c
-extern float         ANSspec_L [MAX_ANS_LINES];
-extern float         ANSspec_R [MAX_ANS_LINES];         // L/R-masking threshold for ANS
-extern float         ANSspec_M [MAX_ANS_LINES];
-extern float         ANSspec_S [MAX_ANS_LINES];         // M/S-masking threshold for ANS
-
 void   Init_Psychoakustiktabellen ( PsyModel* );
 int    CVD2048 ( PsyModel*, const float*, int* );
 
@@ -93,25 +88,6 @@ const float  Butfly    [7] = { 0.5f, 0.2776f, 0.1176f, 0.0361f, 0.0075f, 0.00094
 const float  InvButfly [7] = { 2.f, 3.6023f, 8.5034f, 27.701f, 133.33f, 1054.852f, 16722.408f };
 
 /* V A R I A B L E S */
-
-static float         a          [PART_LONG];
-static float         b          [PART_LONG];
-static float         c          [PART_LONG];
-static float         d          [PART_LONG];           // Integrations for tmpMask
-static float  Xsave_L    [3 * 512];
-static float  Xsave_R    [3 * 512];             // FFT-Amplitudes L/R
-static float  Ysave_L    [3 * 512];
-static float  Ysave_R    [3 * 512];             // FFT-Phases L/R
-static float         T_L        [PART_LONG];
-static float         T_R        [PART_LONG];           // time-constants for tmpMask
-static float         pre_erg_L[2][PART_SHORT];
-static float         pre_erg_R[2][PART_SHORT];          // Preecho-control short
-static float         PreThr_L   [PART_LONG];
-static float         PreThr_R   [PART_LONG];           // for Pre-Echo-control L/R
-static float         tmp_Mask_L [PART_LONG];
-static float         tmp_Mask_R [PART_LONG];           // for Post-Masking L/R
-static int           Vocal_L    [MAX_CVD_LINE + 4];
-static int           Vocal_R    [MAX_CVD_LINE + 4];    // FFT-Line belongs to harmonic?
 
 /* F U N C T I O N S */
 
@@ -131,18 +107,23 @@ void Init_Psychoakustik ( PsyModel* m)
     int  i;
 
     // initializing arrays with zero
-	memset ( Xsave_L,   0, sizeof Xsave_L );
-	memset ( Xsave_R,   0, sizeof Xsave_R );
-	memset ( Ysave_L,   0, sizeof Ysave_L );
-	memset ( Ysave_R,   0, sizeof Ysave_R );
-	memset ( a,         0, sizeof a       );
-	memset ( b,         0, sizeof b       );
-	memset ( c,         0, sizeof c       );
-	memset ( d,         0, sizeof d       );
-	memset ( T_L,       0, sizeof T_L     );
-	memset ( T_R,       0, sizeof T_R     );
-	memset ( Vocal_L,   0, sizeof Vocal_L );
-	memset ( Vocal_R,   0, sizeof Vocal_R );
+	memset ( m->state.Xsave_L, 0, sizeof m->state.Xsave_L );
+	memset ( m->state.Xsave_R, 0, sizeof m->state.Xsave_R );
+	memset ( m->state.Ysave_L, 0, sizeof m->state.Ysave_L );
+	memset ( m->state.Ysave_R, 0, sizeof m->state.Ysave_R );
+	memset ( m->state.a,       0, sizeof m->state.a );
+	memset ( m->state.b,       0, sizeof m->state.b );
+	memset ( m->state.c,       0, sizeof m->state.c );
+	memset ( m->state.d,       0, sizeof m->state.d );
+	memset ( m->state.T_L,     0, sizeof m->state.T_L );
+	memset ( m->state.T_R,     0, sizeof m->state.T_R );
+	memset ( m->state.Vocal_L, 0, sizeof m->state.Vocal_L );
+	memset ( m->state.Vocal_R, 0, sizeof m->state.Vocal_R );
+	memset ( m->state.ANSspec_L, 0, sizeof m->state.ANSspec_L );
+	memset ( m->state.ANSspec_R, 0, sizeof m->state.ANSspec_R );
+	memset ( m->state.ANSspec_M, 0, sizeof m->state.ANSspec_M );
+	memset ( m->state.ANSspec_S, 0, sizeof m->state.ANSspec_S );
+	m->state.loud = 0.f;
 
 	m->SampleFreq = 0.;
 	m->BandWidth = 0.;
@@ -163,10 +144,10 @@ void Init_Psychoakustik ( PsyModel* m)
 
     // setting pre-echo variables to Ltq
 	for ( i = 0; i < PART_LONG; i++ ) {
-		pre_erg_L  [0][i/3] = pre_erg_R  [0][i/3] =
-				pre_erg_L  [1][i/3] = pre_erg_R  [1][i/3] =
-				tmp_Mask_L [i]   = tmp_Mask_R [i]   =
-				PreThr_L   [i]   = PreThr_R   [i]   = partLtq [i];
+		m->state.pre_erg_L[0][i/3] = m->state.pre_erg_R[0][i/3] =
+				m->state.pre_erg_L[1][i/3] = m->state.pre_erg_R[1][i/3] =
+				m->state.tmp_Mask_L[i] = m->state.tmp_Mask_R[i] =
+				m->state.PreThr_L[i] = m->state.PreThr_R[i] = partLtq [i];
 	}
 
     return;
@@ -278,12 +259,12 @@ SubbandEnergy ( const int     MaxBand,
             tmp1 += *spec1;
 
             // Consideration of Aliasing between the subbands
-            if      ( n <   +sizeof(Butfly)/sizeof(*Butfly)  &&  k !=  0 ) {
+            if      ( n <   +7  &&  k !=  0 ) {
                 alias = -1 - (n<<1);
                 tmp0 += Butfly [n]    * (spec0[alias] - *spec0);
                 tmp1 += Butfly [n]    * (spec1[alias] - *spec1);
             }
-            else if ( n > 15-sizeof(Butfly)/sizeof(*Butfly)  &&  k != 31 ) {
+            else if ( n > 15-7  &&  k != 31 ) {
                 alias = 31 - (n<<1);
                 tmp0 += Butfly [15-n] * (spec0[alias] - *spec0);
                 tmp1 += Butfly [15-n] * (spec1[alias] - *spec1);
@@ -429,14 +410,14 @@ AdaptThresholds ( const int MaxLine, float* shaped0, float* shaped1 )
         tmp0 = *thr0;
         tmp1 = *thr1;
 
-        if      ( mod <   +sizeof(InvButfly)/sizeof(*InvButfly)  &&  n >  12 ) {
+        if      ( mod <   +7  &&  n >  12 ) {
             alias = -1 - (mod<<1);
             tmp   = thr0[alias] * invb[mod];
             if ( tmp < tmp0 ) tmp0 = tmp;
             tmp   = thr1[alias] * invb[mod];
             if ( tmp < tmp1 ) tmp1 = tmp;
         }
-        else if ( mod > 15-sizeof(InvButfly)/sizeof(*InvButfly)  &&  n < 499 ) {
+        else if ( mod > 15-7  &&  n < 499 ) {
             alias = 31 - (mod<<1);
             tmp   = thr0[alias] * invb[15-mod];
             if ( tmp < tmp0 ) tmp0 = tmp;
@@ -564,10 +545,9 @@ ApplyTonalityOffset ( float* erg0, float* erg1, const float* werg0, const float*
 static float
 AdaptLtq ( PsyModel* m, const float* erg0, const float* erg1 )
 {
-    static float  loud   = 0.f;
 	float*        weight = Loudness;
-    float         sum    = 0.f;
-    int           n;
+	float         sum    = 0.f;
+	int           n;
 
     // calculate loudness
     for ( n = 0; n < PART_LONG; n++ )
@@ -575,10 +555,10 @@ AdaptLtq ( PsyModel* m, const float* erg0, const float* erg1 )
 
     // Utilization of the time constants (fast drop of Ltq T=5, slow rise of Ltq T=20)
     //loud = (sum < loud) ? (4 * sum + loud)*0.2f : (19 * loud + sum)*0.05f;
-    loud = 0.98 * loud + 0.02 * (0.5 * sum);
+    m->state.loud = 0.98 * m->state.loud + 0.02 * (0.5 * sum);
 
     // calculate dynamic offset for threshold in quiet, 0...+20 dB, at 96 dB loudness, an offset of 20 dB is assumed
-    return 1.f + m->varLtq * loud * 5.023772e-08f;
+    return 1.f + m->varLtq * m->state.loud * 5.023772e-08f;
 }
 
 // input : simultaneous masking threshold *frqthr,
@@ -973,15 +953,15 @@ Psychoakustisches_Modell ( PsyModel* m,
 
     // 'ClearVocalDetection'-Process
     if ( m->CVD_used ) {
-        memset ( Vocal_L, 0, sizeof Vocal_L );
-        memset ( Vocal_R, 0, sizeof Vocal_R );
+        memset ( m->state.Vocal_L, 0, sizeof m->state.Vocal_L );
+        memset ( m->state.Vocal_R, 0, sizeof m->state.Vocal_R );
 
         // left channel
         PowSpec2048 ( &data->L[0], Xerg );
-        isvoc_L = CVD2048 ( m, Xerg, Vocal_L );
+        isvoc_L = CVD2048 ( m, Xerg, m->state.Vocal_L );
         // right channel
         PowSpec2048 ( &data->R[0], Xerg );
-        isvoc_R = CVD2048 ( m, Xerg, Vocal_R );
+        isvoc_R = CVD2048 ( m, Xerg, m->state.Vocal_R );
     }
 
     // calculation of the spectral energy via FFT
@@ -996,13 +976,13 @@ Psychoakustisches_Modell ( PsyModel* m,
 
     // calculate the predictability of the signal
     // left
-    memmove ( Xsave_L+512, Xsave_L, 1024*sizeof(float) );
-    memmove ( Ysave_L+512, Ysave_L, 1024*sizeof(float) );
-    CalcUnpred ( m, MaxLine, erg0, phs0, isvoc_L ? Vocal_L : NULL, Xsave_L, Ysave_L, cw_L );
+    memmove ( m->state.Xsave_L+512, m->state.Xsave_L, 1024*sizeof(float) );
+    memmove ( m->state.Ysave_L+512, m->state.Ysave_L, 1024*sizeof(float) );
+    CalcUnpred ( m, MaxLine, erg0, phs0, isvoc_L ? m->state.Vocal_L : NULL, m->state.Xsave_L, m->state.Ysave_L, cw_L );
     // right
-    memmove ( Xsave_R+512, Xsave_R, 1024*sizeof(float) );
-    memmove ( Ysave_R+512, Ysave_R, 1024*sizeof(float) );
-    CalcUnpred ( m, MaxLine, erg1, phs1, isvoc_R ? Vocal_R : NULL, Xsave_R, Ysave_R, cw_R );
+    memmove ( m->state.Xsave_R+512, m->state.Xsave_R, 1024*sizeof(float) );
+    memmove ( m->state.Ysave_R+512, m->state.Ysave_R, 1024*sizeof(float) );
+    CalcUnpred ( m, MaxLine, erg1, phs1, isvoc_R ? m->state.Vocal_R : NULL, m->state.Xsave_R, m->state.Ysave_R, cw_R );
 
     // calculation of the weighted acoustic pressures per each partition
     WeightedPartitionEnergy ( cLs_L, cLs_R, erg0, erg1, cw_L, cw_R );
@@ -1027,7 +1007,7 @@ Psychoakustisches_Modell ( PsyModel* m,
     PowSpec256 ( &data->L[288+SHORTFFT_OFFSET], F_256[2] );
     PowSpec256 ( &data->L[432+SHORTFFT_OFFSET], F_256[3] );
     // calculate short Threshold
-	CalcShortThreshold ( m, F_256, m->ShortThr, shortThr_L, pre_erg_L, TransientL );
+	CalcShortThreshold ( m, F_256, m->ShortThr, shortThr_L, m->state.pre_erg_L, TransientL );
 
     // calculate four short FFTs (right)
     PowSpec256 ( &data->R[  0+SHORTFFT_OFFSET], F_256[0] );
@@ -1035,7 +1015,7 @@ Psychoakustisches_Modell ( PsyModel* m,
     PowSpec256 ( &data->R[288+SHORTFFT_OFFSET], F_256[2] );
     PowSpec256 ( &data->R[432+SHORTFFT_OFFSET], F_256[3] );
     // calculate short Threshold
-    CalcShortThreshold ( m, F_256, m->ShortThr, shortThr_R, pre_erg_R, TransientR );
+    CalcShortThreshold ( m, F_256, m->ShortThr, shortThr_R, m->state.pre_erg_R, TransientR );
 
     // dynamic adjustment of the threshold in quiet to the loudness of the current sequence
     if ( m->varLtq > 0. )
@@ -1043,10 +1023,10 @@ Psychoakustisches_Modell ( PsyModel* m,
 
     // utilization of the temporal post-masking
     if ( m->tmpMask_used ) {
-		CalcTemporalThreshold ( a, b, T_L, sim_Mask_L, tmp_Mask_L );
-		CalcTemporalThreshold ( c, d, T_R, sim_Mask_R, tmp_Mask_R );
-		memcpy ( sim_Mask_L, tmp_Mask_L, sizeof sim_Mask_L );
-		memcpy ( sim_Mask_R, tmp_Mask_R, sizeof sim_Mask_R );
+		CalcTemporalThreshold ( m->state.a, m->state.b, m->state.T_L, sim_Mask_L, m->state.tmp_Mask_L );
+		CalcTemporalThreshold ( m->state.c, m->state.d, m->state.T_R, sim_Mask_R, m->state.tmp_Mask_R );
+		memcpy ( sim_Mask_L, m->state.tmp_Mask_L, sizeof sim_Mask_L );
+		memcpy ( sim_Mask_R, m->state.tmp_Mask_R, sizeof sim_Mask_R );
     }
 
     // transient signal?
@@ -1064,7 +1044,7 @@ Psychoakustisches_Modell ( PsyModel* m,
     }
 
     // Pre-Echo control
-	PreechoControl ( PartThr_L,PreThr_L, sim_Mask_L, PartThr_R, PreThr_R, sim_Mask_R );
+	PreechoControl ( PartThr_L, m->state.PreThr_L, sim_Mask_L, PartThr_R, m->state.PreThr_R, sim_Mask_R );
 
     // utilization of the threshold in quiet
     ApplyLtq ( Thr_L, Thr_R, PartThr_L, PartThr_R, factorLTQ, 0 );
@@ -1106,10 +1086,10 @@ Psychoakustisches_Modell ( PsyModel* m,
     }
 
 	if ( m->NS_Order > 0 ) {       // providing the Noise Shaping thresholds
-		memcpy ( ANSspec_L, Thr_L, sizeof ANSspec_L );
-		memcpy ( ANSspec_R, Thr_R, sizeof ANSspec_R );
-		memcpy ( ANSspec_M, Thr_M, sizeof ANSspec_M );
-		memcpy ( ANSspec_S, Thr_S, sizeof ANSspec_S );
+		memcpy ( m->state.ANSspec_L, Thr_L, sizeof m->state.ANSspec_L );
+		memcpy ( m->state.ANSspec_R, Thr_R, sizeof m->state.ANSspec_R );
+		memcpy ( m->state.ANSspec_M, Thr_M, sizeof m->state.ANSspec_M );
+		memcpy ( m->state.ANSspec_S, Thr_S, sizeof m->state.ANSspec_S );
     }
     /***************************************************************************************/
     /***************************************************************************************/
@@ -1129,13 +1109,13 @@ Psychoakustisches_Modell ( PsyModel* m,
 
     // calculate the predictability of the signal
     // left
-    memmove ( Xsave_L+512, Xsave_L, 1024*sizeof(float) );
-    memmove ( Ysave_L+512, Ysave_L, 1024*sizeof(float) );
-	CalcUnpred ( m, MaxLine, erg0, phs0, isvoc_L ? Vocal_L : NULL, Xsave_L, Ysave_L, cw_L );
+    memmove ( m->state.Xsave_L+512, m->state.Xsave_L, 1024*sizeof(float) );
+    memmove ( m->state.Ysave_L+512, m->state.Ysave_L, 1024*sizeof(float) );
+	CalcUnpred ( m, MaxLine, erg0, phs0, isvoc_L ? m->state.Vocal_L : NULL, m->state.Xsave_L, m->state.Ysave_L, cw_L );
     // right
-    memmove ( Xsave_R+512, Xsave_R, 1024*sizeof(float) );
-    memmove ( Ysave_R+512, Ysave_R, 1024*sizeof(float) );
-	CalcUnpred ( m, MaxLine, erg1, phs1, isvoc_R ? Vocal_R : NULL, Xsave_R, Ysave_R, cw_R );
+    memmove ( m->state.Xsave_R+512, m->state.Xsave_R, 1024*sizeof(float) );
+    memmove ( m->state.Ysave_R+512, m->state.Ysave_R, 1024*sizeof(float) );
+	CalcUnpred ( m, MaxLine, erg1, phs1, isvoc_R ? m->state.Vocal_R : NULL, m->state.Xsave_R, m->state.Ysave_R, cw_R );
 
     // calculation of the weighted acoustic pressure per each partition
     WeightedPartitionEnergy ( cLs_L, cLs_R, erg0, erg1, cw_L, cw_R );
@@ -1160,7 +1140,7 @@ Psychoakustisches_Modell ( PsyModel* m,
     PowSpec256 ( &data->L[ 864+SHORTFFT_OFFSET], F_256[2] );
     PowSpec256 ( &data->L[1008+SHORTFFT_OFFSET], F_256[3] );
     // calculate short Threshold
-	CalcShortThreshold ( m, F_256, m->ShortThr, shortThr_L, pre_erg_L, TransientL );
+	CalcShortThreshold ( m, F_256, m->ShortThr, shortThr_L, m->state.pre_erg_L, TransientL );
 
     // calculate four short FFTs (right)
     PowSpec256 ( &data->R[ 576+SHORTFFT_OFFSET], F_256[0] );
@@ -1168,7 +1148,7 @@ Psychoakustisches_Modell ( PsyModel* m,
     PowSpec256 ( &data->R[ 864+SHORTFFT_OFFSET], F_256[2] );
     PowSpec256 ( &data->R[1008+SHORTFFT_OFFSET], F_256[3] );
     // calculate short Threshold
-	CalcShortThreshold ( m, F_256, m->ShortThr, shortThr_R, pre_erg_R, TransientR );
+	CalcShortThreshold ( m, F_256, m->ShortThr, shortThr_R, m->state.pre_erg_R, TransientR );
 
     // dynamic adjustment of threshold in quiet to loudness of the current sequence
 	if ( m->varLtq > 0. )
@@ -1176,10 +1156,10 @@ Psychoakustisches_Modell ( PsyModel* m,
 
     // utilization of temporal post-masking
 	if (m->tmpMask_used) {
-		CalcTemporalThreshold ( a, b, T_L, sim_Mask_L, tmp_Mask_L );
-		CalcTemporalThreshold ( c, d, T_R, sim_Mask_R, tmp_Mask_R );
-		memcpy ( sim_Mask_L, tmp_Mask_L, sizeof sim_Mask_L );
-		memcpy ( sim_Mask_R, tmp_Mask_R, sizeof sim_Mask_R );
+		CalcTemporalThreshold ( m->state.a, m->state.b, m->state.T_L, sim_Mask_L, m->state.tmp_Mask_L );
+		CalcTemporalThreshold ( m->state.c, m->state.d, m->state.T_R, sim_Mask_R, m->state.tmp_Mask_R );
+		memcpy ( sim_Mask_L, m->state.tmp_Mask_L, sizeof sim_Mask_L );
+		memcpy ( sim_Mask_R, m->state.tmp_Mask_R, sizeof sim_Mask_R );
     }
 
     // transient signal?
@@ -1197,7 +1177,7 @@ Psychoakustisches_Modell ( PsyModel* m,
     }
 
     // Pre-Echo control
-	PreechoControl ( PartThr_L, PreThr_L, sim_Mask_L, PartThr_R, PreThr_R, sim_Mask_R );
+	PreechoControl ( PartThr_L, m->state.PreThr_L, sim_Mask_L, PartThr_R, m->state.PreThr_R, sim_Mask_R );
 
     // utilization of threshold in quiet
     ApplyLtq ( Thr_L, Thr_R, PartThr_L, PartThr_R, factorLTQ, 0 );
@@ -1242,10 +1222,10 @@ Psychoakustisches_Modell ( PsyModel* m,
 
 	if ( m->NS_Order > 0 ) {
         for ( n = 0; n < MAX_ANS_LINES; n++ ) {                 // providing Noise Shaping thresholds
-			ANSspec_L [n] = minf ( ANSspec_L [n], Thr_L [n] );
-			ANSspec_R [n] = minf ( ANSspec_R [n], Thr_R [n] );
-			ANSspec_M [n] = minf ( ANSspec_M [n], Thr_M [n] );
-			ANSspec_S [n] = minf ( ANSspec_S [n], Thr_S [n] );
+			m->state.ANSspec_L [n] = minf ( m->state.ANSspec_L [n], Thr_L [n] );
+			m->state.ANSspec_R [n] = minf ( m->state.ANSspec_R [n], Thr_R [n] );
+			m->state.ANSspec_M [n] = minf ( m->state.ANSspec_M [n], Thr_M [n] );
+			m->state.ANSspec_S [n] = minf ( m->state.ANSspec_S [n], Thr_S [n] );
         }
     }
 

@@ -1,32 +1,31 @@
-FIND_PATH(REPLAY_GAIN_INCLUDE_DIR replaygain/gain_analysis.h
-	/usr/include
-	/usr/local/include
-	${libmpc_SOURCE_DIR}/../libreplaygain/include
-)
+if(NOT MPC_BUILD_MPCGAIN)
+  return()
+endif()
 
-FIND_LIBRARY(REPLAY_GAIN_LIBRARY NAMES replaygain replaygain_static PATHS
-	/usr/lib
-	/usr/local/lib
-	${libmpc_SOURCE_DIR}/../libreplaygain/bin/src/release
-)
+find_path(REPLAY_GAIN_INCLUDE_DIR replaygain/gain_analysis.h
+    /usr/include
+    /usr/local/include)
+find_library(REPLAY_GAIN_LIBRARY NAMES replaygain
+    /usr/lib
+    /usr/local/lib)
 
-include_directories(${libmpc_SOURCE_DIR}/include)
-include_directories(${REPLAY_GAIN_INCLUDE_DIR})
-
-link_directories(${libmpc_BINARY_DIR}/libmpcdec)
+if(NOT REPLAY_GAIN_INCLUDE_DIR OR NOT REPLAY_GAIN_LIBRARY)
+  message(STATUS "mpcgain skipped (libreplaygain not found)")
+  return()
+endif()
 
 add_executable(mpcgain mpcgain.c)
 
-target_link_libraries(mpcgain ${REPLAY_GAIN_LIBRARY})
-
-if(SHARED)
-  target_link_libraries(mpcgain mpcdec)
-else(SHARED)
-  target_link_libraries(mpcgain mpcdec_static)
-endif(SHARED)
+# The project's own <mpc/*.h> headers must be searched before any
+# system-installed copy of libmpcdec (e.g. Homebrew).
+target_include_directories(mpcgain PRIVATE
+    ${PROJECT_SOURCE_DIR}/include
+    ${PROJECT_SOURCE_DIR}/libmpcdec
+    ${REPLAY_GAIN_INCLUDE_DIR})
+target_link_libraries(mpcgain PRIVATE mpcdec ${REPLAY_GAIN_LIBRARY})
 
 if(NOT MSVC)
-target_link_libraries(mpcgain m)
-endif(NOT MSVC)
+  target_link_libraries(mpcgain PRIVATE m)
+endif()
 
-install(TARGETS mpcgain RUNTIME DESTINATION bin)
+install(TARGETS mpcgain RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

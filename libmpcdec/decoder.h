@@ -34,9 +34,7 @@
 /// \file decoder.h
 #ifndef _MPCDEC_DECODER_H_
 #define _MPCDEC_DECODER_H_
-#ifdef WIN32
 #pragma once
-#endif
 
 #include <mpc/reader.h>
 

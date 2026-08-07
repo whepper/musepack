@@ -69,9 +69,9 @@ mpc_encoder_init ( mpc_encoder_t * e,
 	e->frames_per_block_pwr = FramesBlockPwr;
 
 	if (SamplesInWAVE == 0)
-		e->seek_table = malloc((1 << 16) * sizeof(mpc_uint32_t));
+		e->seek_table = malloc((1 << 16) * sizeof(mpc_seek_t));
 	else
-		e->seek_table = malloc((size_t)(2 + SamplesInWAVE / (MPC_FRAME_LENGTH << (e->seek_pwr + e->frames_per_block_pwr))) * sizeof(mpc_uint32_t));
+		e->seek_table = malloc((size_t)(2 + SamplesInWAVE / (MPC_FRAME_LENGTH << (e->seek_pwr + e->frames_per_block_pwr))) * sizeof(mpc_seek_t));
 
 	e->buffer = malloc(MAX_FRAME_SIZE * (1 << e->frames_per_block_pwr) * sizeof(mpc_uint8_t));
 }
@@ -302,7 +302,7 @@ writeBitstream_SV8 ( mpc_encoder_t* e, int MaxBand)
 	for ( n = 0; n < MaxBand; n++ ) {
 		int Res = Res_L[n];
 		const mpc_int16_t * q = e->Q[n].L;
-		static const unsigned int thres[] = {0, 0, 3, 7, 9, 1, 3, 4, 8};
+		static const int thres[] = {0, 0, 3, 7, 9, 1, 3, 4, 8};
 		static const int HuffQ2_var[5*5*5] =
 		{6, 5, 4, 5, 6, 5, 4, 3, 4, 5, 4, 3, 2, 3, 4, 5, 4, 3, 4, 5, 6, 5, 4, 5, 6, 5, 4, 3, 4, 5, 4, 3, 2, 3, 4, 3, 2, 1, 2, 3, 4, 3, 2, 3, 4, 5, 4, 3, 4, 5, 4, 3, 2, 3, 4, 3, 2, 1, 2, 3, 2, 1, 0, 1, 2, 3, 2, 1, 2, 3, 4, 3, 2, 3, 4, 5, 4, 3, 4, 5, 4, 3, 2, 3, 4, 3, 2, 1, 2, 3, 4, 3, 2, 3, 4, 5, 4, 3, 4, 5, 6, 5, 4, 5, 6, 5, 4, 3, 4, 5, 4, 3, 2, 3, 4, 5, 4, 3, 4, 5, 6, 5, 4, 5, 6};
 
@@ -384,7 +384,7 @@ writeBitstream_SV8 ( mpc_encoder_t* e, int MaxBand)
 	e->framesInBlock++;
 	if (e->framesInBlock == (1 << e->frames_per_block_pwr)) {
 		if ((e->block_cnt & ((1 << e->seek_pwr) - 1)) == 0) {
-			e->seek_table[e->seek_pos] = ftell(e->outputFile);
+			e->seek_table[e->seek_pos] = ftello(e->outputFile);
 			e->seek_pos++;
 		}
 		e->block_cnt++;
@@ -392,101 +392,5 @@ writeBitstream_SV8 ( mpc_encoder_t* e, int MaxBand)
 	}
 }
 
-#if 0
-
-typedef struct {
-	int Symbol;
-	unsigned int Count;
-	unsigned int Code;
-	unsigned int Bits;
-} huff_sym_t;
-
-void _Huffman_MakeTree( huff_sym_t *sym, unsigned int num_symbols);
-void _Huffman_PrintCodes(huff_sym_t * sym, unsigned int num_symbols, int print_type, int offset);
-
-void print_histo(void)
-{
-	int i, j;
-	huff_sym_t sym[HISTO_NB][HISTO_LEN];
-	unsigned int dist[HISTO_NB];
-	unsigned int size[HISTO_NB];
-	unsigned int cnt[HISTO_NB];
-	unsigned int total_cnt, total_size, full_count = 0, full_size = 0;
-	double optim_size, full_optim = 0;
-
-	return;
-
-	memset(dist, 1, sizeof dist);
-	memset(sym, 0, sizeof(huff_sym_t) * HISTO_LEN * HISTO_NB);
-
-	for(j = 0 ; j < HISTO_NB ; j++) {
-		for(i = 0 ; i < HISTO_LEN; i++) {
-			sym[j][i].Symbol = i;
-			sym[j][i].Count = histo[j][i];
-			if (sym[j][i].Count == 0)
-				sym[j][i].Count = 1;
-		}
-		_Huffman_MakeTree(sym[j], HISTO_LEN);
-		_Huffman_PrintCodes(sym[j], HISTO_LEN, 3, 0);
-		_Huffman_PrintCodes(sym[j], HISTO_LEN, 0, 0);
-		_Huffman_PrintCodes(sym[j], HISTO_LEN, 1, 0);
-		total_cnt = 0;
-		total_size = 0;
-		optim_size = 0;
-		for( i = 0; i < HISTO_LEN; i++) {
-			total_cnt += sym[j][i].Count;
-			total_size += sym[j][i].Count * sym[j][i].Bits;
-			if (sym[j][i].Count != 0)
-				optim_size += sym[j][i].Count * __builtin_log2(sym[j][i].Count);
-		}
-		full_count += total_cnt;
-		full_size += total_size;
-		optim_size = total_cnt * __builtin_log2(total_cnt) - optim_size;
-		full_optim += optim_size;
-		size[j] = total_size;
-		cnt[j] = total_cnt;
-		printf("%u count : %u huff : %f bps ", j, total_cnt, (float)total_size / total_cnt);
-		printf("opt : %f bps ", (float)optim_size / total_cnt);
-		printf("loss : %f bps (%f %%)\n", (float)(total_size - optim_size) / total_cnt, (float)(total_size - optim_size) * 100 / optim_size);
-		for( i = 0; i < HISTO_LEN; i++){
-			printf("%u ", sym[j][i].Bits);
-		}
-
-		printf("\n\n");
-	}
-	printf("cnt : %u size %f optim %f\n", full_count, (float)full_size / full_count, (float)full_optim / full_count);
-	printf("loss : %f bps (%f %%)\n", (float)(full_size - full_optim) / full_count, (float)(full_size - full_optim) * 100 / full_optim);
-
-
-	printf("\n");
-}
-
-void
-Dump ( const unsigned int* q, const int Res )
-{
-    switch ( Res ) {
-    case  1:
-        for ( k = 0; k < 36; k++, q++ )
-            printf ("%2d%c", *q-1, k==35?'\n':' ');
-        break;
-    case  2:
-        for ( k = 0; k < 36; k++, q++ )
-            printf ("%2d%c", *q-2, k==35?'\n':' ');
-        break;
-    case  3: case  4: case  5: case  6: case  7:
-        if ( Res == 5 )
-            for ( k = 0; k < 36; k++, q++ )
-                printf ("%2d%c", *q-7, k==35?'\n':' ');
-        break;
-    case  8: case  9: case 10: case 11: case 12: case 13: case 14: case 15: case 16: case 17:
-        printf ("%2u: ", Res-1 );
-        for ( k = 0; k < 36; k++, q++ ) {
-            printf ("%6d", *q - (1 << (Res-2)) );
-        }
-        printf ("\n");
-        break;
-    }
-}
-#endif
 
 /* end of encode_sv7.c */

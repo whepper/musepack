@@ -1,8 +1,6 @@
 #ifndef __LIBWAVEFORMAT_H__
 #define __LIBWAVEFORMAT_H__
-#ifdef WIN32
 #pragma once
-#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -10,18 +8,6 @@ extern "C" {
 
 //general declarations
 
-#ifdef _MSC_VER
-typedef __int8 t_wav_int8;
-typedef unsigned __int8 t_wav_uint8;
-typedef __int16 t_wav_int16;
-typedef unsigned __int16 t_wav_uint16;
-typedef __int32 t_wav_int32;
-typedef unsigned __int32 t_wav_uint32;
-typedef __int64 t_wav_int64;
-typedef unsigned __int64 t_wav_uint64;
-typedef float t_wav_float32;
-typedef double t_wav_float64;
-#else
 #include <stdint.h>
 typedef int8_t t_wav_int8;
 typedef uint8_t t_wav_uint8;
@@ -33,7 +19,6 @@ typedef int64_t t_wav_int64;
 typedef uint64_t t_wav_uint64;
 typedef float t_wav_float32;
 typedef double t_wav_float64;
-#endif
 
 typedef union
 {

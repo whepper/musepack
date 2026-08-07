@@ -28,14 +28,6 @@ void   Cepstrum2048  ( float* cep, const int );
 
 /* C O N S T A N T S */
 // from MatLab-Simulation (Fourier-transforms of the Cos-Rolloff)
-#if 0
-static const float  Puls [11] = {
-    -0.02724753942504f, -0.10670808991329f, -0.06198987803623f,  0.18006206051664f,
-     0.49549552704050f,  0.64201253447071f,  0.49549552704050f,  0.18006206051664f,
-    -0.06198987803623f, -0.10670808991329f, -0.02724753942504f
-};
-#endif
-
 static const float  Puls [ 9] = {
     -0.10670808991329f, -0.06198987803623f,  0.18006206051664f,  0.49549552704050f,
      0.64201253447071f,  0.49549552704050f,  0.18006206051664f, -0.06198987803623f,
@@ -226,11 +218,12 @@ CEP_Analyse2048 ( PsyModel* m,
 static mpc_inline float   /* This is a rough estimation with an accuracy of |x|<0.0037 */
 logfast ( float x )
 {
-	mpc_doubleint y;
-	y.d = x * x;
-    y.d *= y.d;
-    y.d *= y.d;
-	return (y.n[1] + (45127.5 - 1072693248.)) * ( M_LN2 / (1L<<23) );
+	mpc_uint32_t y[2];
+	double d = x * x;
+    d *= d;
+    d *= d;
+	mpc_double_to_bits(d, y);
+	return (y[1] + (45127.5 - 1072693248.)) * ( M_LN2 / (1L<<23) );
 }
 
 #endif
@@ -241,7 +234,7 @@ logfast ( float x )
 int
 CVD2048 ( PsyModel* m, const float* spec, int* vocal )
 {
-    static float  cep [4096];     // cep[4096] -- array, which is also used for the 2048 FFT
+    float         cep [4096];     // cep[4096] -- array, which is also used for the 2048 FFT
     const float*  win = CosWin;   // pointer to cos-roll-off
     float         res1;
     float         res2;

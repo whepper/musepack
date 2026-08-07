@@ -1,33 +1,50 @@
-CMAKE_MINIMUM_REQUIRED(VERSION 2.4)
-cmake_policy(SET CMP0003 NEW)
+cmake_minimum_required(VERSION 3.16)
+
+project(libmpc
+        VERSION 7.0.1
+        DESCRIPTION "Musepack (MPC) audio codec"
+        HOMEPAGE_URL "https://www.musepack.net/"
+        LANGUAGES C)
+
 include(TestBigEndian)
+test_big_endian(MPC_BIG_ENDIAN_HOST)
 
-project(libmpc C)
+# ---- options ----------------------------------------------------------------
+option(MPC_BUILD_SHARED "Build libmpcdec as a shared library" ON)
+option(MPC_BUILD_TESTS   "Build and run the fixture regression tests" OFF)
+option(MPC_BUILD_MPCGAIN "Build mpcgain (requires libreplaygain)" ON)
+option(MPC_BUILD_MPCCHAP "Build mpcchap (requires libcuefile)" ON)
 
-set(CMAKE_VERBOSE_MAKEFILE false)
-TEST_BIG_ENDIAN(MPC_ENDIANNESS)
+if(WIN32 AND NOT MSVC)
+  set(MPC_BUILD_SHARED OFF)
+endif()
 
-if(WIN32)
-  option(SHARED "Use shared libmpcdec" OFF)
-else(WIN32)
-  option(SHARED "Use shared libmpcdec" ON)
-endif(WIN32)
+# ---- global settings --------------------------------------------------------
+include(GNUInstallDirs)
 
-add_definitions(-DFAST_MATH -DCVD_FASTLOG)
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_C_EXTENSIONS OFF)
 
 if(NOT MSVC)
-  set(CMAKE_C_FLAGS "-O3 -Wall -fomit-frame-pointer -pipe")
-endif(NOT MSVC)
+  add_compile_options(-Wall -Wextra)
+endif()
 
+# ---- subdirectories ---------------------------------------------------------
+add_subdirectory(include)
 add_subdirectory(libmpcdec)
-add_subdirectory(libmpcpsy)
 add_subdirectory(libmpcenc)
+add_subdirectory(libmpcpsy)
 add_subdirectory(libwavformat)
-add_subdirectory(mpcgain)
 add_subdirectory(mpcdec)
 add_subdirectory(mpcenc)
 add_subdirectory(mpc2sv8)
 add_subdirectory(mpccut)
-add_subdirectory(mpcchap)
 add_subdirectory(wavcmp)
-add_subdirectory(include)
+add_subdirectory(mpcgain)
+add_subdirectory(mpcchap)
+
+if(MPC_BUILD_TESTS)
+  enable_testing()
+  add_subdirectory(tests)
+endif()

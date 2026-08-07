@@ -35,21 +35,12 @@
 /// Definitions and structures used only internally by the libmpcdec.
 #ifndef _MPCDEC_INTERNAL_H_
 #define _MPCDEC_INTERNAL_H_
-#ifdef WIN32
 #pragma once
-#endif
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 #include <mpc/mpcdec.h>
-
-/// Big/little endian 32 bit byte swapping routine.
-static mpc_inline
-mpc_uint32_t mpc_swap32(mpc_uint32_t val) {
-    return (((val & 0xFF000000) >> 24) | ((val & 0x00FF0000) >> 8)
-          | ((val & 0x0000FF00) <<  8) | ((val & 0x000000FF) << 24));
-}
 
 typedef struct mpc_block_t {
 	char key[2];	// block key

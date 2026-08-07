@@ -78,15 +78,6 @@ static mpc_int32_t mpc_unread_bytes_unchecked(mpc_demux * d) {
 	return d->bytes_total + d->buffer - d->bits_reader.buff - ((8 - d->bits_reader.count) >> 3);
 }
 
-// Returns the amount of unread bytes in the demux buffer.
-static mpc_uint32_t mpc_unread_bytes(mpc_demux * d) {
-	mpc_int32_t unread_bytes = mpc_unread_bytes_unchecked(d);
-
-	if (unread_bytes < 0) return 0;
-	
-	return (mpc_uint32_t) unread_bytes;
-}
-
 
 
 // Returns the number of bytes available in the buffer.
@@ -109,8 +100,8 @@ mpc_demux_fill(mpc_demux * d, mpc_uint32_t min_bytes, int flags)
 		mpc_uint32_t bytesread;
 
 		if (flags & MPC_BUFFER_SWAP) {
-			bytes2read &= -1 << 2;
-			offset = (unread_bytes + 3) & ( -1 << 2);
+			bytes2read &= ~3u;
+			offset = (unread_bytes + 3) & ~3u;
 			offset -= unread_bytes;
 		}
 
@@ -128,9 +119,17 @@ mpc_demux_fill(mpc_demux * d, mpc_uint32_t min_bytes, int flags)
 			memset(d->buffer + d->bytes_total + bytesread, 0, bytes2read - bytesread); // FIXME : why ?
 		}
 		if (flags & MPC_BUFFER_SWAP) {
-			unsigned int i, * tmp = (unsigned int *) (d->buffer + d->bytes_total);
-			for(i = 0 ;i < (bytes2read >> 2); i++)
-				tmp[i] = mpc_swap32(tmp[i]);
+			// The SV7 stream stores 32-bit fields big-endian. Byte-swapping
+			// converts them to the byte order the bit reader expects. Because
+			// this is a pure byte-level transformation on the raw buffer, the
+			// resulting buffer content is identical on little- and big-endian
+			// hosts, making the decoder host-independent.
+			unsigned int i;
+			unsigned char * tmp = d->buffer + d->bytes_total;
+			for(i = 0; i < (bytes2read >> 2); i++, tmp += 4) {
+				unsigned char b0 = tmp[0], b1 = tmp[1], b2 = tmp[2];
+				tmp[0] = tmp[3]; tmp[1] = b2; tmp[2] = b1; tmp[3] = b0;
+			}
 		}
 		d->bytes_total += bytesread;
 		unread_bytes += bytesread;
@@ -162,11 +161,11 @@ mpc_demux_seek(mpc_demux * d, mpc_seek_t fpos, mpc_uint32_t min_bytes) {
 	} else {
 		mpc_seek_t next_pos = fpos >> 3;
 		if (d->si.stream_version == 7)
-			next_pos = ((next_pos - d->si.header_position) & (-1 << 2)) + d->si.header_position;
+			next_pos = ((next_pos - d->si.header_position) & ~3u) + d->si.header_position;
 		bit_offset = (int) (fpos - (next_pos << 3));
 
 		mpc_demux_clear_buff(d);
-		if (!d->r->seek(d->r, (mpc_int32_t) next_pos))
+		if (!d->r->seek(d->r, next_pos))
 			return MPC_STATUS_FAIL;
 	}
 
@@ -199,11 +198,11 @@ mpc_seek_t mpc_demux_pos(mpc_demux * d)
  * @return size of tag, in bytes
  * @return MPC_STATUS_FAIL on errors of any kind
  */
-static mpc_int32_t mpc_demux_skip_id3v2(mpc_demux * d)
+static mpc_seek_t mpc_demux_skip_id3v2(mpc_demux * d)
 {
 	mpc_uint8_t  tmp [4];
 	mpc_bool_t footerPresent;     // ID3v2.4-flag
-	mpc_int32_t size;
+	mpc_seek_t size;
 
     // we must be at the beginning of the stream
 	mpc_demux_fill(d, 3, 0);
@@ -312,7 +311,7 @@ static mpc_status mpc_demux_ST(mpc_demux * d)
 	for (i = 2; i < file_table_size; i++) {
 		int code = mpc_bits_golomb_dec(&r, 12);
 		if (code & 1)
-			code = -(code & (-1 << 1));
+			code = -(code & ~1u);
 		code <<= 2;
 		last[i & 1] = code + 2 * last[(i-1) & 1] - last[i & 1];
 		if ((i & mask) == 0)
@@ -574,6 +573,16 @@ void mpc_demux_exit(mpc_demux * d)
 void mpc_demux_get_info(mpc_demux * d, mpc_streaminfo * i)
 {
 	memcpy(i, &d->si, sizeof d->si);
+}
+
+void mpc_demux_set_samples_to_skip(mpc_demux * d, mpc_uint32_t samples)
+{
+	d->d->samples_to_skip = samples;
+}
+
+mpc_seek_t mpc_demux_chap_pos(mpc_demux * d)
+{
+	return d->chap_pos;
 }
 
 static mpc_status mpc_demux_decode_inner(mpc_demux * d, mpc_frame_info * i)

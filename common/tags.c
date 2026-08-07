@@ -629,7 +629,7 @@ IsUnicode ( const char* src, size_t len )
     if ( len & 1 )                                              // odd number of bytes?
         return 0;
 
-	if ( src [0] != (char)0xFF  ||  src [1] != (char)0xFE )     // Microsoft Unicode preample (also useful to detect endianess, but currently only little endian is supported)
+    if ( src [0] != (char)0xFF  ||  src [1] != (char)0xFE )     // Microsoft Unicode preample (also useful to detect endianess, but currently only little endian is supported)
         return 0;
 
     for ( len >>= 1; len > 0; len--, src += 2 ) {               // Check for invalid codes (FFFE, FFFF, DC00...DFFF without a prepend D800...DBFF, D800...DBFF without a n appended DC00...DFFF)
@@ -854,14 +854,14 @@ FinalizeTags ( FILE* fp, unsigned int Version, unsigned int flags )
     if ( TagCount == 0 )
         return 0;
 
-	if (flags & TAG_NO_PREAMBLE) {
-		estimatedbytes -= 8;
-		writtenbytes += 8;
-	}
-	if (flags & TAG_NO_FOOTER)
-		estimatedbytes = 0;
-	if (flags & TAG_NO_HEADER)
-		writtenbytes = 0;
+    if (flags & TAG_NO_PREAMBLE) {
+        estimatedbytes -= 8;
+        writtenbytes += 8;
+    }
+    if (flags & TAG_NO_FOOTER)
+        estimatedbytes = 0;
+    if (flags & TAG_NO_HEADER)
+        writtenbytes = 0;
 
     qsort ( T, TagCount, sizeof (*T), cmpfn2 );
 
@@ -966,7 +966,7 @@ CopyTags_ID3 ( FILE* fp )
     if ( -1 == fseek ( fp, -128L, SEEK_END ) )
         return -1;
 
-	if ( 128 != fread(tmp, 1, 128, fp) )
+    if ( 128 != fread(tmp, 1, 128, fp) )
         return -1;
 
     if ( 0 != memcmp ( tmp, "TAG", 3 ) ) {
@@ -976,11 +976,11 @@ CopyTags_ID3 ( FILE* fp )
     if ( !tmp[3]  &&  !tmp[33]  &&  !tmp[63]  &&  !tmp[93]  &&  !tmp[97] )
         return -1;
 
-	memcpy_crop  ( "Title"  , (char*)tmp +  3, 30, 0 );
-	memcpy_crop  ( "Artist" , (char*)tmp + 33, 30, 0 );
-	memcpy_crop  ( "Album"  , (char*)tmp + 63, 30, 0 );
-	memcpy_crop  ( "Year"   , (char*)tmp + 93,  4, 0 );
-	memcpy_crop  ( "Comment", (char*)tmp + 97, 30, 0 );
+    memcpy_crop  ( "Title"  , (char*)tmp +  3, 30, 0 );
+    memcpy_crop  ( "Artist" , (char*)tmp + 33, 30, 0 );
+    memcpy_crop  ( "Album"  , (char*)tmp + 63, 30, 0 );
+    memcpy_crop  ( "Year"   , (char*)tmp + 93,  4, 0 );
+    memcpy_crop  ( "Comment", (char*)tmp + 97, 30, 0 );
 
     if ( tmp[127] < sizeof(GenreList)/sizeof(*GenreList) )
         if ( ! TagKeyExists ( "Genre", 0 ) )
@@ -1021,7 +1021,7 @@ CopyTags_APE ( FILE* fp )
 
     if ( -1 == fseek ( fp, -(long)sizeof T, SEEK_END ) )
         return -1;
-	if ( sizeof(T) != fread  (&T, 1, sizeof T, fp) )
+    if ( sizeof(T) != fread  (&T, 1, sizeof T, fp) )
         return -1;
     if ( memcmp ( T.ID, "APETAGEX", sizeof(T.ID) ) != 0 )
         return -1;
@@ -1084,21 +1084,14 @@ CopyTags_APE ( FILE* fp )
 
 */
 
-static const char* const  parser_strings [] = {
-    "/A_Tx",
-    "/A/Tx",
-    "/A_C_0x",
-    "/C_n A_Tx",
-    "/C_n A_C_Tx",              // new
-    "/A/C_n Tx",
-    "/A/C N_n Tx",
-    "/A_C_n Tx",
-    "/C/n A_Tx",
-    "/C/N_n A_Tx",
-    "/A/C N_0x",
-    "/A/C_0x",
-};
-
+/*
+ *    dst[0] = Artist
+ *    dst[1] = CD
+ *    dst[2] = Title
+ *    dst[3] = +CD
+ *    dst[4] = number
+ *    dst[5] = ext
+ */
 /*
  *    dst[0] = Artist
  *    dst[1] = CD

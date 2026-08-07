@@ -50,7 +50,7 @@
 # include <unistd.h>
 #endif
 
-#if   defined __linux__
+#if   defined __linux__  &&  defined __i386__
 #  include <fpu_control.h>
 #elif defined __FreeBSD__
 # include <machine/floatingpoint.h>
@@ -59,23 +59,11 @@
 #endif
 
 
-#if !defined(__APPLE__)
-// use optimized assembler routines for Pentium III/K6-2/Athlon (only 32 bit OS, Intel x86 and no MAKE_xxBITS)
-// you need the NASM assembler on your system, the program becomes a little bit larger and decoding
-// on AMD K6-2 (x3), AMD K6-III (x3), AMD Duron (x1.7), AMD Athlon (x1.7), Pentium III (x2) and Pentium 4 (x1.8) becomes faster
-#define USE_ASM
-
-#endif
-
 // Use termios for reading values from keyboard without echo and ENTER
 #define USE_TERMIOS
 
 // make debug output in tags.c stfu
 #define STFU
-
-#if INT_MAX < 2147483647L
-# undef USE_ASM
-#endif
 
 #ifndef O_BINARY
 # ifdef _O_BINARY
@@ -254,8 +242,8 @@ extern float __invSCF [128 + 6];        // tabulated scalefactors (inverted)
 
 float  ISNR_Schaetzer                  ( const float* samples, const float comp, const int res);
 float  ISNR_Schaetzer_Trans            ( const float* samples, const float comp, const int res);
-void   QuantizeSubband                 ( unsigned int* qu_output, const float* input, const int res, float* errors, const int maxNsOrder );
-void   QuantizeSubbandWithNoiseShaping ( unsigned int* qu_output, const float* input, const int res, float* errors, const float* FIR );
+void   QuantizeSubband                 ( mpc_int16_t* qu_output, const float* input, const int res, float* errors, const int maxNsOrder );
+void   QuantizeSubbandWithNoiseShaping ( mpc_int16_t* qu_output, const float* input, const int res, float* errors, const float* FIR );
 
 void   NoiseInjectionComp ( void );
 
@@ -263,10 +251,6 @@ void   NoiseInjectionComp ( void );
 int    WaitKey      ( void );
 int    CheckKeyKeep ( void );
 int    CheckKey     ( void );
-
-
-// regress.c
-void    Regression       ( float* const _r, float* const _b, const float* p, const float* q );
 
 
 // tags.c

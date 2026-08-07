@@ -21,15 +21,16 @@
 
 #ifdef FAST_MATH
 
-const float  tabatan2   [ 2*TABSTEP+1] [2];
-const float  tabcos     [26*TABSTEP+1] [2];
-const float  tabsqrt_ex [256];
-const float  tabsqrt_m  [   TABSTEP+1] [2];
+// Tables are filled at runtime by Init_FastMath(), so they must not be const.
+float  tabatan2   [ 2*TABSTEP+1] [2];
+float  tabcos     [26*TABSTEP+1] [2];
+float  tabsqrt_ex [256];
+float  tabsqrt_m  [   TABSTEP+1] [2];
 
 
 void   Init_FastMath ( void )
 {
-    int i; mpc_floatint X, Y; double xm, x0, xp, x, y; float* p;
+    int i; double xm, x0, xp, x, y; float* p;
 
     p = (float*) tabatan2;
     for ( i = -TABSTEP; i <= TABSTEP; i++ ) {
@@ -55,12 +56,9 @@ void   Init_FastMath ( void )
 
     p = (float*) tabsqrt_ex;
     for ( i = 0; i < 255; i++ ) {
-        X.n = (i << 23);
-        Y.n = (i << 23) + (1<<23) - 1;
-        *p++ = sqrt(X.f);
+        *p++ = sqrtf (mpc_bits_to_float ((mpc_uint32_t) (i << 23)));
     }
-    X.n  = (255 << 23) - 1;
-    *p++ = sqrt(X.f);
+    *p++ = sqrtf (mpc_bits_to_float ((mpc_uint32_t) ((255 << 23) - 1)));
 
     p = (float*) tabsqrt_m;
     for ( i = 1*TABSTEP; i <= 2*TABSTEP; i++ ) {

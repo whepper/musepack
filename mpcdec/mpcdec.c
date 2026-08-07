@@ -33,10 +33,9 @@
 */
 #include <stdio.h>
 #include <assert.h>
+#include <inttypes.h>
 #include <time.h>
 #include <mpc/mpcdec.h>
-#include "../libmpcdec/decoder.h"
-#include "../libmpcdec/internal.h"
 #include <libwaveformat.h>
 #include <getopt.h>
 
@@ -44,7 +43,7 @@
 #include <crtdbg.h>
 #endif
 
-#ifdef WIN32
+#ifdef _WIN32
 # include <fcntl.h>
 # include <io.h>
 # define SET_BINARY_MODE(file) setmode(fileno(file), O_BINARY)
@@ -92,7 +91,7 @@ static void print_info(mpc_streaminfo * info, char * filename)
 	fprintf(stderr, "samplerate: %d Hz\n", info->sample_freq);
 	fprintf(stderr, "channels: %d\n", info->channels);
 	fprintf(stderr, "length: %d:%.2d (%u samples)\n", minutes, seconds, (mpc_uint32_t)mpc_streaminfo_get_length_samples(info));
-	fprintf(stderr, "file size: %d Bytes\n", info->total_file_length);
+	fprintf(stderr, "file size: %" PRId64 " Bytes\n", info->total_file_length);
 	fprintf(stderr, "track peak: %2.2f dB\n", info->peak_title / 256.f);
 	fprintf(stderr, "track gain: %2.2f dB / %2.2f dB\n", info->gain_title / 256.f, info->gain_title == 0 ? 0 : 64.82f - info->gain_title / 256.f);
 	fprintf(stderr, "album peak: %2.2f dB\n", info->peak_album / 256.f);
@@ -190,7 +189,7 @@ main(int argc, char **argv)
 
         frame.buffer = sample_buffer;
 	    if (check)
-		    demux->d->samples_to_skip = MPC_FRAME_LENGTH + MPC_DECODER_SYNTH_DELAY;
+		    mpc_demux_set_samples_to_skip(demux, MPC_FRAME_LENGTH + MPC_DECODER_SYNTH_DELAY);
         begin        = clock();
         err = mpc_demux_decode(demux, &frame);
         end          = clock();

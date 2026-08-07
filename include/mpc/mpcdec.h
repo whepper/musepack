@@ -35,9 +35,7 @@
 /// Top level include file for libmpcdec.
 #ifndef _MPCDEC_H_
 #define _MPCDEC_H_
-#ifdef WIN32
 #pragma once
-#endif
 
 #include "reader.h"
 #include "streaminfo.h"
@@ -125,6 +123,14 @@ MPC_API mpc_status mpc_demux_seek_second(mpc_demux * d, double seconds);
 
 /// \return the current position in the stream (in bits) from the beginning of the file
 MPC_API mpc_seek_t mpc_demux_pos(mpc_demux * d);
+
+/// Sets the number of decoded output samples to discard. Used to skip the
+/// synthesis filter output while still parsing the bitstream (e.g. for
+/// stream checking or transcoding).
+MPC_API void mpc_demux_set_samples_to_skip(mpc_demux * d, mpc_uint32_t samples);
+
+/// \return byte offset of the first chapter block in the file (0 if none)
+MPC_API mpc_seek_t mpc_demux_chap_pos(mpc_demux * d);
 
 /// chapters : only for sv8 streams
 /**

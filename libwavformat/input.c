@@ -329,11 +329,6 @@ t_wav_uint32 waveformat_input_open(t_wav_input_file * p_file,t_wav_input_file_ca
 				case 32:
 					p_file->m_input_handler = g_input_handler_float32;
 					break;
-#if 0
-				case 64:
-
-					break;
-#endif
 				default:
 					//unsupported format
 					return 0;
@@ -447,6 +442,7 @@ t_wav_uint32 waveformat_input_process_int16(t_wav_input_file * p_file,t_wav_int1
 
 void waveformat_input_close(t_wav_input_file * p_file)
 {
+	(void) p_file;
 }
 
 t_wav_uint32 waveformat_input_query_sample_rate(t_wav_input_file * p_file)

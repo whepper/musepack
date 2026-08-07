@@ -35,9 +35,7 @@
 /// Libmpcdec internal math routines.
 #ifndef _MPCDEC_MATH_H_
 #define _MPCDEC_MATH_H_
-#ifdef WIN32
 #pragma once
-#endif
 
 #include <mpc/mpc_types.h>
 

@@ -38,11 +38,6 @@ static float  InvFourier [MAX_NS_ORDER + 1] [16];
 static float  Cos_Tab    [16] [MAX_NS_ORDER + 1];
 static float  Sin_Tab    [16] [MAX_NS_ORDER + 1];
 
-float         ANSspec_L  [MAX_ANS_LINES];
-float         ANSspec_R  [MAX_ANS_LINES];       // L/R-masking thresholds for ANS
-float         ANSspec_M  [MAX_ANS_LINES];
-float         ANSspec_S  [MAX_ANS_LINES];       // M/S-masking thresholds for ANS
-
 void
 Init_ANS ( void )
 {
@@ -288,12 +283,12 @@ NS_Analyse ( PsyModel* m,
     // for L or M, respectively
     memset ( m->FIR_L,      0, sizeof m->FIR_L      );         // reset FIR
     memset ( m->NS_Order_L, 0, sizeof m->NS_Order_L );         // reset Flags
-	FindOptimalANS ( MaxBand, MSflag, ANSspec_L, ANSspec_M, m->NS_Order_L, m->SNR_comp_L, m->FIR_L, smr.L, smr.M, m->SCF_Index_L, Transient );
+	FindOptimalANS ( MaxBand, MSflag, m->state.ANSspec_L, m->state.ANSspec_M, m->NS_Order_L, m->SNR_comp_L, m->FIR_L, smr.L, smr.M, m->SCF_Index_L, Transient );
 
     // for R or S, respectively
 	memset ( m->FIR_R,      0, sizeof m->FIR_R      );         // reset FIR
 	memset ( m->NS_Order_R, 0, sizeof m->NS_Order_R );         // reset Flags
-	FindOptimalANS ( MaxBand, MSflag, ANSspec_R, ANSspec_S, m->NS_Order_R, m->SNR_comp_R, m->FIR_R, smr.R, smr.S, m->SCF_Index_R, Transient );
+	FindOptimalANS ( MaxBand, MSflag, m->state.ANSspec_R, m->state.ANSspec_S, m->NS_Order_R, m->SNR_comp_R, m->FIR_R, smr.R, smr.S, m->SCF_Index_R, Transient );
 
     return;
 }

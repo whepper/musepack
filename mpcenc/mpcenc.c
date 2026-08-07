@@ -28,8 +28,6 @@
 #include <mpc/mpcmath.h>
 
 /* G L O B A L  V A R I A B L E S */
-float         Power_L    [32] [3];
-float         Power_R    [32] [3];
 
 /* MS-Coding */
 int           PredictionBands =  0;
@@ -469,7 +467,8 @@ static const unsigned char  Penalty [256] = {
 #define P(new,old)  Penalty [128 + (old) - (new)]
 
 static void
-SCF_Extraktion ( PsyModel*m, mpc_encoder_t* e, const int MaxBand, SubbandFloatTyp* x )
+SCF_Extraktion ( PsyModel*m, mpc_encoder_t* e, const int MaxBand, SubbandFloatTyp* x,
+                 float Power_L [32][3], float Power_R [32][3] )
 {
     int    Band;
     int    n;
@@ -700,10 +699,10 @@ Quantisierung ( PsyModel * m,
         if ( *resR > 0 ) {
             if ( m->NS_Order_R [Band] > 0 ) {
                 QuantizeSubbandWithNoiseShaping ( subq[Band].R, subx[Band].R, *resR, errorR [Band], m->FIR_R [Band] );
-                memcpy ( errorR [Band], errorR [Band] + 36, MAX_NS_ORDER * sizeof (**errorL) );
+                memcpy ( errorR [Band], errorR [Band] + 36, MAX_NS_ORDER * sizeof (**errorR) );
             } else {
-				QuantizeSubband                 ( subq[Band].R, subx[Band].R, *resR, errorL [Band], MAX_NS_ORDER);
-                memcpy ( errorR [Band], errorR [Band] + 36, MAX_NS_ORDER * sizeof (**errorL) );
+				QuantizeSubband                 ( subq[Band].R, subx[Band].R, *resR, errorR [Band], MAX_NS_ORDER);
+                memcpy ( errorR [Band], errorR [Band] + 36, MAX_NS_ORDER * sizeof (**errorR) );
             }
         }
     }
@@ -1458,6 +1457,8 @@ static void Init_FPU ( void )
     _asm { fstcw cw };
     cw  &=  ~0x300;
 	_asm { fldcw cw };
+#else
+    (void) cw;
 #endif
 }
 
@@ -1517,6 +1518,8 @@ mainloop ( int argc, char** argv )
     SMRTyp           SMR;                       // contains SMRs for the given frame
     PCMDataTyp       Main;                      // contains PCM data for 1600 samples
     SubbandFloatTyp  X [32];                    // Subbandsamples as float()
+    float            Power_L [32][3];           // per-frame subband power (L), shared between SCF_Extraktion and Allocate
+    float            Power_R [32][3];           // per-frame subband power (R)
     wave_t           Wave;                      // contains WAV-files arguments
     mpc_uint64_t        AllSamplesRead   =    0;   // overall read Samples per channel
     unsigned int     CurrentRead      =    0;   // current read Samples per channel
@@ -1535,8 +1538,8 @@ mainloop ( int argc, char** argv )
 
     // initialize tables which must be initialized once and only once
 
-	m.SCF_Index_L = (int*) e.SCF_Index_L;
-	m.SCF_Index_R = (int*) e.SCF_Index_R;
+	m.SCF_Index_L = e.SCF_Index_L;
+	m.SCF_Index_R = e.SCF_Index_R;
 
 	Init_Psychoakustik (&m);
 	Init_FPU ();
@@ -1625,7 +1628,7 @@ mainloop ( int argc, char** argv )
     }
 
 	e.MS_Channelmode = m.MS_Channelmode;
-	e.seek_ref = ftell(e.outputFile);
+	e.seek_ref = ftello(e.outputFile);
 	writeMagic(&e);
 	writeStreamInfo ( &e, m.Max_Band, m.MS_Channelmode > 0, SamplesInWAVE, 0,
 					   m.SampleFreq, Wave.Channels > 2 ? 2 : Wave.Channels);
@@ -1637,7 +1640,7 @@ mainloop ( int argc, char** argv )
 		writeBlock(&e, "EI", MPC_FALSE, 0);
 	}
 	if (NoSeekTable == 0) {
-		e.seek_ptr = ftell(e.outputFile);
+		e.seek_ptr = ftello(e.outputFile);
 		writeBits (&e, 0, 16);
 		writeBits (&e, 0, 24); // jump 40 bits for seek table pointer
 		writeBlock(&e, "SO", MPC_FALSE, 0); // reserve space for seek offset
@@ -1703,7 +1706,7 @@ mainloop ( int argc, char** argv )
 				RaiseSMR (&m, m.Max_Band, &SMR );                            // Minimum-operation on SBRs (full bandwidth)
 			if ( m.MS_Channelmode > 0 )
 				MS_LR_Entscheidung ( m.Max_Band, e.MS_Flag, &SMR, X );      // Selection of M/S- or L/R-Coding
-			SCF_Extraktion (&m, &e, m.Max_Band, X );                             // Extraction of the scalefactors and normalization of the subband samples
+			SCF_Extraktion (&m, &e, m.Max_Band, X, Power_L, Power_R );                             // Extraction of the scalefactors and normalization of the subband samples
             TransientenCalc ( Transient, TransientL, TransientR );
 			if ( m.NS_Order > 0 ) {
 				NS_Analyse (&m, m.Max_Band, e.MS_Flag, SMR, Transient );                  // calculate possible ANS-Filter and the expected gain
@@ -1743,7 +1746,7 @@ mainloop ( int argc, char** argv )
     // write the last incomplete block
 	if (e.framesInBlock != 0) {
 		if ((e.block_cnt & ((1 << e.seek_pwr) - 1)) == 0) {
-			e.seek_table[e.seek_pos] = ftell(e.outputFile);
+			e.seek_table[e.seek_pos] = ftello(e.outputFile);
 			e.seek_pos++;
 		}
 		e.block_cnt++;
@@ -1756,11 +1759,11 @@ mainloop ( int argc, char** argv )
 	writeBlock(&e, "SE", MPC_FALSE, 0); // write end of stream block
 
 	if (Wave.PCMSamples != AllSamplesRead) {
-		fseek(e.outputFile, e.seek_ref + 4, SEEK_SET);
+		fseeko(e.outputFile, (off_t) (e.seek_ref + 4), SEEK_SET);
 		writeStreamInfo ( &e, m.Max_Band, m.MS_Channelmode > 0, SamplesInWAVE, 0,
 						   m.SampleFreq, Wave.Channels > 2 ? 2 : Wave.Channels);
 		writeBlock(&e, "SH", MPC_TRUE, si_size);
-		fseek(e.outputFile, 0, SEEK_END);
+		fseeko(e.outputFile, 0, SEEK_END);
 	}
 
     ShowProgress (&m, SamplesInWAVE, SamplesInWAVE, e.outputBits );

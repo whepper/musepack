@@ -44,10 +44,10 @@ typedef struct {
 	mpc_uint_t frames_per_block_pwr; // Number of frame in a block = 1 << frames_per_block_pwr
 
 	// seeking
-	mpc_uint32_t * seek_table;
+	mpc_seek_t * seek_table;
 	mpc_uint32_t seek_pos; /// current position in the seek table
-	mpc_uint32_t seek_ref; /// reference position for the seek information
-	mpc_uint32_t seek_ptr; /// position of the seek pointer block
+	mpc_seek_t seek_ref; /// reference position for the seek information
+	mpc_seek_t seek_ptr; /// position of the seek pointer block
 	mpc_uint32_t seek_pwr; /// keep a seek table entry every 2^seek_pwr block
 	mpc_uint32_t block_cnt; /// number of encoded blocks
 

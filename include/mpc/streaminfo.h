@@ -34,9 +34,7 @@
 /// \file streaminfo.h
 #ifndef _MPCDEC_STREAMINFO_H_
 #define _MPCDEC_STREAMINFO_H_
-#ifdef WIN32
 #pragma once
-#endif
 
 #include <mpc/mpc_types.h>
 
@@ -45,7 +43,7 @@ extern "C" {
 #endif
 
 
-typedef mpc_int32_t mpc_streaminfo_off_t;
+typedef mpc_int64_t mpc_streaminfo_off_t;
 
 /// \brief mpc stream properties structure
 ///

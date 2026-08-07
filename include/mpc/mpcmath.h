@@ -17,26 +17,43 @@
  */
 
 #include <math.h>
+#include <string.h>
 
 #include <mpc/mpc_types.h>
 
-typedef union mpc_floatint
+/// Convert between float and its IEEE 754 bit pattern without union
+/// type-punning (which is undefined behavior).
+static mpc_inline mpc_uint32_t mpc_float_to_bits(float f)
 {
-	float   f;
-	mpc_int32_t n;
-} mpc_floatint;
+	mpc_uint32_t n;
+	memcpy(&n, &f, sizeof n);
+	return n;
+}
 
-typedef union mpc_doubleint
+static mpc_inline float mpc_bits_to_float(mpc_uint32_t n)
 {
-	double   d;
-	mpc_int32_t n[2];
-} mpc_doubleint;
+	float f;
+	memcpy(&f, &n, sizeof f);
+	return f;
+}
+
+/// Convert between double and its IEEE 754 bit pattern (as two 32-bit halves,
+/// low half first) without union type-punning.
+static mpc_inline void mpc_double_to_bits(double d, mpc_uint32_t n[2])
+{
+	memcpy(n, &d, sizeof d);
+}
+
+static mpc_inline double mpc_bits_to_double(mpc_uint32_t n[2])
+{
+	double d;
+	memcpy(&d, n, sizeof d);
+	return d;
+}
 
 static mpc_inline mpc_int32_t mpc_lrintf(float fVal)
 {
-	mpc_floatint tmp;
-	tmp.f = fVal  + 0x00FF8000;
-	return tmp.n - 0x4B7F8000;
+	return (mpc_int32_t) mpc_float_to_bits(fVal + 0x00FF8000) - 0x4B7F8000;
 }
 
 #define mpc_round32		mpc_lrintf
@@ -87,29 +104,29 @@ static mpc_inline mpc_int32_t mpc_lrintf(float fVal)
 # define IFLOORF(x)   my_ifloor ((float)(x))
 
 void   Init_FastMath ( void );
-extern const float  tabatan2   [] [2];
-extern const float  tabcos     [] [2];
-extern const float  tabsqrt_ex [];
-extern const float  tabsqrt_m  [] [2];
+extern float  tabatan2   [] [2];
+extern float  tabcos     [] [2];
+extern float  tabsqrt_ex [];
+extern float  tabsqrt_m  [] [2];
 
 static mpc_inline float my_atan2 ( float x, float y )
 {
-	float t, ret; int i; mpc_floatint mx, my;
+	float t, ret; int i;
+	mpc_uint32_t mx = mpc_float_to_bits(x);
+	mpc_uint32_t my = mpc_float_to_bits(y);
 
-	mx.f = x;
-	my.f = y;
-	if ( (mx.n & 0x7FFFFFFF) < (my.n & 0x7FFFFFFF) ) {
-		i   = mpc_round32 (t = TABSTEP * (mx.f / my.f));
+	if ( (mx & 0x7FFFFFFF) < (my & 0x7FFFFFFF) ) {
+		i   = mpc_round32 (t = TABSTEP * (x / y));
 		ret = tabatan2 [1*TABSTEP+i][0] + tabatan2 [1*TABSTEP+i][1] * (t-i);
-		if ( my.n < 0 )
+		if ( (mpc_int32_t) my < 0 )
 			ret = (float)(ret - M_PI);
 	}
-	else if ( mx.n < 0 ) {
-		i   = mpc_round32 (t = TABSTEP * (my.f / mx.f));
+	else if ( (mpc_int32_t) mx < 0 ) {
+		i   = mpc_round32 (t = TABSTEP * (y / x));
 		ret = - M_PI/2 - tabatan2 [1*TABSTEP+i][0] + tabatan2 [1*TABSTEP+i][1] * (i-t);
 	}
-	else if ( mx.n > 0 ) {
-		i   = mpc_round32 (t = TABSTEP * (my.f / mx.f));
+	else if ( (mpc_int32_t) mx > 0 ) {
+		i   = mpc_round32 (t = TABSTEP * (y / x));
 		ret = + M_PI/2 - tabatan2 [1*TABSTEP+i][0] + tabatan2 [1*TABSTEP+i][1] * (i-t);
 	}
 	else {
@@ -130,20 +147,18 @@ static mpc_inline float my_cos ( float x )
 
 static mpc_inline int my_ifloor ( float x )
 {
-	mpc_floatint mx;
-	mx.f = (float) (x + (0x0C00000L + 0.500000001));
-	return mx.n - 1262485505;
+	return (mpc_int32_t) mpc_float_to_bits((float) (x + (0x0C00000L + 0.500000001))) - 1262485505;
 }
 
 
 static mpc_inline float my_sqrt ( float x )
 {
-	float  ret; int i, ex; mpc_floatint mx;
-	mx.f = x;
-	ex   = mx.n >> 23;                     // get the exponent
-	mx.n = (mx.n & 0x7FFFFF) | 0x42800000; // delete the exponent
-	i    = mpc_round32 (mx.f);             // Integer-part of the mantissa  (round ????????????)
-	ret  = tabsqrt_m [i-TABSTEP][0] + tabsqrt_m [i-TABSTEP][1] * (mx.f-i); // calculate value
+	float  ret; int i, ex;
+	mpc_uint32_t mx = mpc_float_to_bits(x);
+	ex   = (int) ((mpc_int32_t) mx >> 23);      // get the exponent
+	mx   = (mx & 0x7FFFFF) | 0x42800000;        // delete the exponent
+	i    = mpc_round32 (mpc_bits_to_float(mx)); // Integer-part of the mantissa  (round ????????????)
+	ret  = tabsqrt_m [i-TABSTEP][0] + tabsqrt_m [i-TABSTEP][1] * (mpc_bits_to_float(mx)-i); // calculate value
 	ret *= tabsqrt_ex [ex];
 	return ret;
 }

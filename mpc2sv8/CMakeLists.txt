@@ -1,35 +1,30 @@
-include_directories(${libmpc_SOURCE_DIR}/include)
-
-include_directories(${libmpc_SOURCE_DIR}/libmpcdec)
-link_directories(${libmpc_BINARY_DIR}/libmpcdec)
-include_directories(${libmpc_SOURCE_DIR}/libmpcenc)
-link_directories(${libmpc_BINARY_DIR}/libmpcenc)
+set(MPC2SV8_SOURCES mpc2sv8.c)
+set(MPC2SV8_INCLUDES
+    ${PROJECT_SOURCE_DIR}/libmpcdec
+    ${PROJECT_SOURCE_DIR}/libmpcenc)
 
 if(MSVC)
-include_directories(${libmpc_SOURCE_DIR}/win32)
-add_executable(mpc2sv8 mpc2sv8.c ${libmpc_SOURCE_DIR}/win32/attgetopt.c ${libmpc_SOURCE_DIR}/win32/basename.c ${libmpc_SOURCE_DIR}/win32/dirent.c)
-endif(MSVC)
+  list(APPEND MPC2SV8_SOURCES
+      ${PROJECT_SOURCE_DIR}/win32/attgetopt.c
+      ${PROJECT_SOURCE_DIR}/win32/basename.c
+      ${PROJECT_SOURCE_DIR}/win32/dirent.c)
+  list(APPEND MPC2SV8_INCLUDES ${PROJECT_SOURCE_DIR}/win32)
+endif()
 
-add_executable(mpc2sv8 mpc2sv8.c)
-
-if(SHARED)
-  target_link_libraries(mpc2sv8 mpcdec)
-else(SHARED)
-  target_link_libraries(mpc2sv8 mpcdec_static)
-endif(SHARED)
-
-target_link_libraries(mpc2sv8 mpcenc_static)
+add_executable(mpc2sv8 ${MPC2SV8_SOURCES})
+target_include_directories(mpc2sv8 PRIVATE ${MPC2SV8_INCLUDES})
+target_link_libraries(mpc2sv8 PRIVATE mpcdec mpcenc_static)
 
 if(WIN32)
-target_link_libraries(mpc2sv8 winmm)
-endif(WIN32)
+  target_link_libraries(mpc2sv8 PRIVATE winmm)
+endif()
 
 if(NOT MSVC)
-target_link_libraries(mpc2sv8 m)
-endif(NOT MSVC)
+  target_link_libraries(mpc2sv8 PRIVATE m)
+endif()
 
-if(CMAKE_SYSTEM_NAME STREQUAL OpenBSD)
-target_link_libraries(mpc2sv8 ossaudio)
-endif(CMAKE_SYSTEM_NAME STREQUAL OpenBSD)
+if(CMAKE_SYSTEM_NAME STREQUAL "OpenBSD")
+  target_link_libraries(mpc2sv8 PRIVATE ossaudio)
+endif()
 
-install(TARGETS mpc2sv8 RUNTIME DESTINATION bin)
+install(TARGETS mpc2sv8 RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

@@ -1,30 +1,32 @@
-FIND_PATH(CUEFILE_INCLUDE_DIR cuetools/cuefile.h
-	${libmpc_SOURCE_DIR}/../libcuefile/include
-)
+if(NOT MPC_BUILD_MPCCHAP)
+  return()
+endif()
 
-FIND_LIBRARY(CUEFILE_LIBRARY NAMES cuefile PATHS
-	${CUEFILE_INCLUDE_DIR}/../src
-)
+find_path(CUEFILE_INCLUDE_DIR cuetools/cuefile.h)
+find_library(CUEFILE_LIBRARY NAMES cuefile)
 
-include_directories(${libmpc_SOURCE_DIR}/include)
-include_directories(${CUEFILE_INCLUDE_DIR})
+if(NOT CUEFILE_INCLUDE_DIR OR NOT CUEFILE_LIBRARY)
+  message(STATUS "mpcchap skipped (libcuefile not found)")
+  return()
+endif()
 
-link_directories(${libmpc_BINARY_DIR}/libmpcdec)
-link_directories(${libmpc_BINARY_DIR}/libmpcenc)
+add_executable(mpcchap
+    mpcchap.c
+    dictionary.c
+    iniparser.c
+    ${PROJECT_SOURCE_DIR}/common/tags.c)
 
-add_executable(mpcchap mpcchap.c dictionary.c iniparser.c ${libmpc_SOURCE_DIR}/common/tags.c)
-
-if(SHARED)
-  target_link_libraries(mpcchap mpcdec)
-else(SHARED)
-  target_link_libraries(mpcchap mpcdec_static)
-endif(SHARED)
-
-target_link_libraries(mpcchap mpcenc_static)
-target_link_libraries(mpcchap ${CUEFILE_LIBRARY})
+# The project's own <mpc/*.h> headers must be searched before any
+# system-installed copy of libmpcdec (e.g. Homebrew).
+target_include_directories(mpcchap PRIVATE
+    ${PROJECT_SOURCE_DIR}/include
+    ${CUEFILE_INCLUDE_DIR}
+    ${PROJECT_SOURCE_DIR}/libmpcdec
+    ${PROJECT_SOURCE_DIR}/libmpcenc)
+target_link_libraries(mpcchap PRIVATE mpcdec mpcenc_static ${CUEFILE_LIBRARY})
 
 if(NOT MSVC)
-target_link_libraries(mpcchap m)
-endif(NOT MSVC)
+  target_link_libraries(mpcchap PRIVATE m)
+endif()
 
-install(TARGETS mpcchap RUNTIME DESTINATION bin)
+install(TARGETS mpcchap RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

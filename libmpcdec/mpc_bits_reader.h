@@ -32,6 +32,12 @@
   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
+#ifndef _MPCDEC_BITS_READER_H_
+#define _MPCDEC_BITS_READER_H_
+
+#include <mpc/mpc_types.h>
+#include "huffman.h"
+
 #define MAX_ENUM 32
 
 MPC_API int mpc_bits_get_block(mpc_bits_reader * r, mpc_block * p_block);
@@ -147,3 +153,5 @@ static mpc_inline mpc_uint32_t mpc_bits_enum_dec(mpc_bits_reader * r, mpc_uint_t
 
 	return bits;
 }
+
+#endif /* _MPCDEC_BITS_READER_H_ */

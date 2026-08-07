@@ -108,7 +108,6 @@ static mpc_status check_streaminfo(mpc_streaminfo * si)
 mpc_status
 streaminfo_read_header_sv7(mpc_streaminfo* si, mpc_bits_reader * r)
 {
-    mpc_uint16_t Estimatedpeak_title = 0;
 	mpc_uint32_t frames, last_frame_samples;
 
 	si->bitrate            = 0;
@@ -120,7 +119,7 @@ streaminfo_read_header_sv7(mpc_streaminfo* si, mpc_bits_reader * r)
 	si->profile_name       = mpc_get_version_string(si->profile);
 	mpc_bits_read(r, 2); // Link ?
 	si->sample_freq        = samplefreqs[mpc_bits_read(r, 2)];
-	Estimatedpeak_title    = (mpc_uint16_t) mpc_bits_read(r, 16);   // read the ReplayGain data
+	mpc_bits_read(r, 16);   // estimated peak, unused (read for stream alignment)
 	si->gain_title         = (mpc_uint16_t) mpc_bits_read(r, 16);
 	si->peak_title         = (mpc_uint16_t) mpc_bits_read(r, 16);
 	si->gain_album         = (mpc_uint16_t) mpc_bits_read(r, 16);
@@ -188,6 +187,7 @@ streaminfo_read_header_sv8(mpc_streaminfo* si, const mpc_bits_reader * r_in,
 						   mpc_size_t block_size)
 {
 	mpc_uint32_t CRC;
+	mpc_uint32_t samplefreq_idx;
 	mpc_bits_reader r = *r_in;
 
 	CRC = (mpc_bits_read(&r, 16) << 16) | mpc_bits_read(&r, 16);
@@ -202,7 +202,11 @@ streaminfo_read_header_sv8(mpc_streaminfo* si, const mpc_bits_reader * r_in,
 	mpc_bits_get_size(&r, &si->beg_silence);
 
 	si->is_true_gapless = 1;
-	si->sample_freq = samplefreqs[mpc_bits_read(&r, 3)];
+	samplefreq_idx = mpc_bits_read(&r, 3);
+	if (samplefreq_idx >= sizeof samplefreqs / sizeof *samplefreqs ||
+			samplefreqs[samplefreq_idx] == 0)
+		return MPC_STATUS_FAIL;
+	si->sample_freq = samplefreqs[samplefreq_idx];
 	si->max_band = mpc_bits_read(&r, 5) + 1;
 	si->channels = mpc_bits_read(&r, 4) + 1;
 	si->ms = mpc_bits_read(&r, 1);

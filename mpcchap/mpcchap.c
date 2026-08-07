@@ -18,7 +18,6 @@
 */
 
 #include <mpc/mpcdec.h>
-#include "../libmpcdec/internal.h"
 #include "../libmpcenc/libmpcenc.h"
 #include "iniparser.h"
 
@@ -83,7 +82,7 @@ mpc_status add_chaps_ini(char * mpc_file, char * chap_file, mpc_demux * demux, m
 	char * tmp_buff;
 	dictionary * dict;
 
-	chap_pos = (demux->chap_pos >> 3) + si->header_position;
+	chap_pos = (mpc_demux_chap_pos(demux) >> 3) + si->header_position;
 	end_pos = mpc_demux_pos(demux) >> 3;
 	chap_size = end_pos - chap_pos;
 
@@ -103,7 +102,7 @@ mpc_status add_chaps_ini(char * mpc_file, char * chap_file, mpc_demux * demux, m
 		char * chap_sec = iniparser_getsecname(dict, i), block_header[12] = "CT", sample_offset[10];
 		mpc_int64_t chap_pos = atoll(chap_sec);
 
-		if (chap_pos > si->samples - si->beg_silence)
+		if (chap_pos > (mpc_int64_t) (si->samples - si->beg_silence))
 			fprintf(stderr, "warning : chapter %i starts @ %lli samples after the end of the stream (%lli)\n",
 			        i + 1, chap_pos, si->samples - si->beg_silence);
 
@@ -164,7 +163,7 @@ mpc_status add_chaps_cue(char * mpc_file, char * chap_file, mpc_demux * demux, m
 		return !MPC_STATUS_OK;
 	}
 
-	chap_pos = (demux->chap_pos >> 3) + si->header_position;
+	chap_pos = (mpc_demux_chap_pos(demux) >> 3) + si->header_position;
 	end_pos = mpc_demux_pos(demux) >> 3;
 	chap_size = end_pos - chap_pos;
 
@@ -189,7 +188,7 @@ mpc_status add_chaps_cue(char * mpc_file, char * chap_file, mpc_demux * demux, m
 		// position du chapitre
 		chap_pos = (mpc_int64_t) si->sample_freq * track_get_start (track) / 75;
 
-		if (chap_pos > si->samples - si->beg_silence)
+		if (chap_pos > (mpc_int64_t) (si->samples - si->beg_silence))
 			fprintf(stderr, "warning : chapter %i starts @ %lli samples after the end of the stream (%lli)\n",
 			        i, chap_pos, si->samples - si->beg_silence);
 
@@ -202,7 +201,7 @@ mpc_status add_chaps_cue(char * mpc_file, char * chap_file, mpc_demux * demux, m
 		tag_len += key_len + item_len;
 		nitem++;
 
-		for (j = 0; j < (sizeof(Ptis) / sizeof(*Ptis)); j++) {
+		for (j = 0; j < (int) (sizeof(Ptis) / sizeof(*Ptis)); j++) {
 			char const * item_key = APE_keys[j], * item_value;
 			item_value = cdtext_get (Ptis[j], cdtext);
 			if (item_value != 0) {

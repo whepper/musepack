@@ -33,9 +33,7 @@
 */
 #ifndef _MPC_TYPES_H_
 #define _MPC_TYPES_H_
-#ifdef WIN32
 #pragma once
-#endif
 
 #include <stdlib.h>
 #include <memory.h>
@@ -44,26 +42,18 @@
 extern "C" {
 #endif
 
+#include <stdint.h>
+typedef int8_t    mpc_int8_t;
+typedef uint8_t   mpc_uint8_t;
+typedef int16_t   mpc_int16_t;
+typedef uint16_t  mpc_uint16_t;
+typedef int32_t   mpc_int32_t;
+typedef uint32_t  mpc_uint32_t;
+typedef int64_t   mpc_int64_t;
+typedef uint64_t  mpc_uint64_t;
 #ifdef _MSC_VER
-typedef __int8           mpc_int8_t;
-typedef unsigned __int8  mpc_uint8_t;
-typedef __int16          mpc_int16_t;
-typedef unsigned __int16 mpc_uint16_t;
-typedef __int32          mpc_int32_t;
-typedef unsigned __int32 mpc_uint32_t;
-typedef __int64          mpc_int64_t;
-typedef unsigned __int64 mpc_uint64_t;
 #define mpc_inline __inline
 #else
-#include <stdint.h>
-typedef int8_t   mpc_int8_t;
-typedef uint8_t  mpc_uint8_t;
-typedef int16_t  mpc_int16_t;
-typedef uint16_t mpc_uint16_t;
-typedef int32_t  mpc_int32_t;
-typedef uint32_t mpc_uint32_t;
-typedef int64_t  mpc_int64_t;
-typedef uint64_t  mpc_uint64_t;
 #define mpc_inline inline
 #endif
 
@@ -72,12 +62,8 @@ typedef unsigned int mpc_uint_t;
 typedef size_t mpc_size_t;
 typedef mpc_uint8_t mpc_bool_t;
 
-// #define LONG_SEEK_TABLE
-#ifdef LONG_SEEK_TABLE  // define as needed (mpc_uint32_t supports files up to 512 MB)
+// Seek positions are 64-bit so files larger than 4 GB are supported.
 typedef mpc_uint64_t mpc_seek_t;
-#else
-typedef mpc_uint32_t mpc_seek_t;
-#endif
 
 # define mpc_int64_min -9223372036854775808ll
 # define mpc_int64_max 9223372036854775807ll

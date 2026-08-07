@@ -99,15 +99,9 @@ ATHformula_Frank ( float freq )
         /*  7943.3 */  1154, 1251, 1348, 1421,
         /* 10000.0 */  1479, 1399, 1285, 1193,
         /* 12589.3 */  1287, 1519, 1914, 2369,
-#if 0
-        /* 15848.9 */  3352, 4865, 5942, 6177,
-        /* 19952.6 */  6385, 6604, 6833, 7009,
-        /* 25118.9 */  7066, 7127, 7191, 7260,
-#else
         /* 15848.9 */  3352, 4352, 5352, 6352,
         /* 19952.6 */  7352, 8352, 9352, 9999,
         /* 25118.9 */  9999, 9999, 9999, 9999,
-#endif
     };
     double    freq_log;
     unsigned  index;
@@ -326,13 +320,9 @@ Spread ( PsyModel* m )
                 tmpy  = -32.f * tmpx;                   // 32 dB per Bark, e33 (10)
             }
             else if ( tmpx > 0 ) {                      // upwards (S2)
-#if 0
-                x = (wl[i]+wh[i])/2 * (float)(SampleFreq / 2000)/512;   // center frequency in kHz ???????
-                if (i==0) x = 0.5f  * (float)(SampleFreq / 2000)/512;   // if first spectral line
-#else
                 x  = i  ?  wl[i]+wh[i]  :  1;
                 x *= m->SampleFreq / 1000. / 2048;         // center frequency in kHz
-#endif
+
                 // dB/Bark
                 tmpy = (22.f + 0.23f / x) * tmpx;       // e33 (10)
 

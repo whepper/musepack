@@ -1,29 +1,36 @@
-if(MPC_ENDIANNESS)
-add_definitions(-DMPC_BIG_ENDIAN)
-endif(MPC_ENDIANNESS)
+add_executable(mpcenc
+    keyboard.c
+    mpcenc.c
+    pipeopen.c
+    stderr.c
+    wave_in.c
+    winmsg.c
+    ${PROJECT_SOURCE_DIR}/common/tags.c)
 
-include_directories(${libmpc_SOURCE_DIR}/include)
-include_directories(${libmpc_SOURCE_DIR}/libmpcpsy)
-include_directories(${libmpc_SOURCE_DIR}/libmpcenc)
+target_include_directories(mpcenc PRIVATE
+    ${PROJECT_SOURCE_DIR}/libmpcpsy
+    ${PROJECT_SOURCE_DIR}/libmpcenc
+    ${CMAKE_CURRENT_SOURCE_DIR})
 
-link_directories(${libmpc_BINARY_DIR}/libmpcpsy)
-link_directories(${libmpc_BINARY_DIR}/libmpcenc)
+target_link_libraries(mpcenc PRIVATE mpcpsy mpcenc_static)
 
-add_executable(mpcenc keyboard.c mpcenc.c pipeopen.c stderr.c ${libmpc_SOURCE_DIR}/common/tags.c wave_in.c winmsg.c)
+# Encoder uses the optimized math tables and must match libmpcpsy's FAST_MATH.
+target_compile_definitions(mpcenc PRIVATE FAST_MATH)
 
-target_link_libraries(mpcenc mpcpsy_static)
-target_link_libraries(mpcenc mpcenc_static)
+if(MPC_BIG_ENDIAN_HOST)
+  target_compile_definitions(mpcenc PRIVATE MPC_BIG_ENDIAN)
+endif()
 
 if(WIN32)
-target_link_libraries(mpcenc winmm)
-endif(WIN32)
+  target_link_libraries(mpcenc PRIVATE winmm)
+endif()
 
 if(NOT MSVC)
-target_link_libraries(mpcenc m)
-endif(NOT MSVC)
+  target_link_libraries(mpcenc PRIVATE m)
+endif()
 
-if(CMAKE_SYSTEM_NAME STREQUAL OpenBSD)
-target_link_libraries(mpcenc ossaudio)
-endif(CMAKE_SYSTEM_NAME STREQUAL OpenBSD)
+if(CMAKE_SYSTEM_NAME STREQUAL "OpenBSD")
+  target_link_libraries(mpcenc PRIVATE ossaudio)
+endif()
 
-install(TARGETS mpcenc RUNTIME DESTINATION bin)
+install(TARGETS mpcenc RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

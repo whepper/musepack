@@ -46,12 +46,11 @@ main(int argc, char **argv)
 	int err;
 	int total_samples, total_diff;
 
-	if(4 < argc && argc < 3)
+	if(argc < 3 || argc > 4)
 	{
 		usage(argv[0]);
 		return 0;
 	}
-
 	t_wav_input_file_callback wavi_fc;
 	memset(&wav_in_1, 0, sizeof wav_in_1);
 	wavi_fc.m_read      = wav_read;
@@ -109,7 +108,7 @@ main(int argc, char **argv)
 		if (samples[0] != samples[1] || samples[0] == 0)
 			break;
 
-		int i = 0;
+		unsigned int i = 0;
 		for( ; i < samples[0]; i++) {
 			sample_buff[0][i] -= sample_buff[1][i];
 			if (sample_buff[0][i]) {

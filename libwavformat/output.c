@@ -1,13 +1,13 @@
 #include "libwaveformat.h"
 
-__inline static void write_int24(t_wav_uint8 * p_output,t_wav_int32 p_value)
+static void write_int24(t_wav_uint8 * p_output,t_wav_int32 p_value)
 {
 	p_output[0] = (t_wav_uint8)(p_value);
 	p_output[1] = (t_wav_uint8)(p_value>>8);
 	p_output[2] = (t_wav_uint8)(p_value>>16);
 }
 
-__inline static void write_int32(t_wav_uint8 * p_output,t_wav_int32 p_value)
+static void write_int32(t_wav_uint8 * p_output,t_wav_int32 p_value)
 {
 	p_output[0] = (t_wav_uint8)(p_value);
 	p_output[1] = (t_wav_uint8)(p_value>>8);
@@ -15,7 +15,7 @@ __inline static void write_int32(t_wav_uint8 * p_output,t_wav_int32 p_value)
 	p_output[3] = (t_wav_uint8)(p_value>>24);
 }
 
-__inline static void write_float(t_wav_uint8 * p_output,t_wav_float32 p_value)
+static void write_float(t_wav_uint8 * p_output,t_wav_float32 p_value)
 {
 	t_wav_conv bah;
 	bah.f = p_value;

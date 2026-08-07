@@ -49,6 +49,35 @@ typedef struct {
 	float  S [32];
 } SMRTyp;
 
+/// Per-instance working state of the psychoacoustic model. Kept inside
+/// PsyModel so multiple encoders can run concurrently without sharing
+/// file-scope state.
+typedef struct {
+	float         a [PART_LONG];
+	float         b [PART_LONG];
+	float         c [PART_LONG];
+	float         d [PART_LONG];           // Integrations for tmpMask
+	float  Xsave_L [3 * 512];
+	float  Xsave_R [3 * 512];              // FFT-Amplitudes L/R
+	float  Ysave_L [3 * 512];
+	float  Ysave_R [3 * 512];              // FFT-Phases L/R
+	float         T_L [PART_LONG];
+	float         T_R [PART_LONG];         // time-constants for tmpMask
+	float         pre_erg_L [2][PART_SHORT];
+	float         pre_erg_R [2][PART_SHORT]; // Preecho-control short
+	float         PreThr_L [PART_LONG];
+	float         PreThr_R [PART_LONG];    // for Pre-Echo-control L/R
+	float         tmp_Mask_L [PART_LONG];
+	float         tmp_Mask_R [PART_LONG];  // for Post-Masking L/R
+	int           Vocal_L [MAX_CVD_LINE + 4];
+	int           Vocal_R [MAX_CVD_LINE + 4]; // FFT-Line belongs to harmonic?
+	float         loud;                    // tracked loudness for AdaptLtq
+	float         ANSspec_L [MAX_ANS_LINES];
+	float         ANSspec_R [MAX_ANS_LINES]; // L/R-masking thresholds for ANS
+	float         ANSspec_M [MAX_ANS_LINES];
+	float         ANSspec_S [MAX_ANS_LINES]; // M/S-masking thresholds for ANS
+} psy_state_t;
+
 typedef struct {
 	int           Max_Band;                    // maximum bandwidth
 	float         SampleFreq;
@@ -85,9 +114,12 @@ typedef struct {
 	float KBD1; // = 2.
 	float KBD2; // = -1.
 
+	// per-instance working state (FFT history, masking integrators, ...)
+	psy_state_t state;
+
 	// FIXME : remove this :
-	int * SCF_Index_L;
-	int * SCF_Index_R;              // Scalefactor-index for Bitstream
+	int (* SCF_Index_L)[3];
+	int (* SCF_Index_R)[3];         // Scalefactor-index for Bitstream
 
 } PsyModel;
 

@@ -120,7 +120,7 @@ mpc_decoder * mpc_decoder_init(mpc_streaminfo *si)
 	if (p_tmp != 0) {
 		mpc_decoder_setup(p_tmp);
 		mpc_decoder_set_streaminfo(p_tmp, si);
-		huff_init_lut(LUT_DEPTH); // FIXME : this needs to be called only once when the library is loaded
+		huff_init_lut(LUT_DEPTH); // safe to call on every init, LUTs are built once
 	}
 
 	return p_tmp;
@@ -204,9 +204,7 @@ mpc_decoder_requantisierung(mpc_decoder *d)
 #define MPC_MULTIPLY_SCF(CcVal, SCF_idx) \
     MPC_MULTIPLY_EX(CcVal, d->SCF[SCF_idx], d->SCF_shift[SCF_idx])
 #else
-
-#error FIXME, Cc table is in 18.14 format
-
+#error MPC_FIXED_POINT is only supported with MPC_FIXED_POINT_FRACTPART == 14 (the requantization coefficients are in 18.14 format)
 #endif
 #else
 #define MPC_MULTIPLY_SCF(CcVal, SCF_idx) \

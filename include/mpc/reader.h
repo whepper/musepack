@@ -34,9 +34,7 @@
 /// \file reader.h
 #ifndef _MPCDEC_READER_H_
 #define _MPCDEC_READER_H_
-#ifdef WIN32
 #pragma once
-#endif
 
 #include <mpc/mpc_types.h>
 #include <stdio.h>
@@ -57,13 +55,13 @@ struct mpc_reader_t {
     mpc_int32_t (*read)(mpc_reader *p_reader, void *ptr, mpc_int32_t size);
 
     /// Seeks to byte position offset.
-    mpc_bool_t (*seek)(mpc_reader *p_reader, mpc_int32_t offset);
+    mpc_bool_t (*seek)(mpc_reader *p_reader, mpc_seek_t offset);
 
     /// Returns the current byte offset in the stream.
-    mpc_int32_t (*tell)(mpc_reader *p_reader);
+    mpc_seek_t (*tell)(mpc_reader *p_reader);
 
     /// Returns the total length of the source stream, in bytes.
-    mpc_int32_t (*get_size)(mpc_reader *p_reader);
+    mpc_seek_t (*get_size)(mpc_reader *p_reader);
 
     /// True if the stream is a seekable stream.
     mpc_bool_t (*canseek)(mpc_reader *p_reader);

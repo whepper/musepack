@@ -1,8 +1,6 @@
-include_directories(${libmpc_SOURCE_DIR}/libwavformat)
-link_directories(${libmpc_BINARY_DIR}/libwavformat)
-
 add_executable(wavcmp wavcmp.c)
 
-target_link_libraries(wavcmp wavformat_static)
+target_include_directories(wavcmp PRIVATE ${PROJECT_SOURCE_DIR}/libwavformat)
+target_link_libraries(wavcmp PRIVATE wavformat)
 
-install(TARGETS wavcmp RUNTIME DESTINATION bin)
+install(TARGETS wavcmp RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
