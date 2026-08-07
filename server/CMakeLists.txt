@@ -33,6 +33,11 @@ target_include_directories(musicpack_server
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vendor/sqlite)
 
+if(WIN32)
+  target_include_directories(musicpack_server PRIVATE
+      ${PROJECT_SOURCE_DIR}/win32)
+endif()
+
 target_compile_definitions(musicpack_server PRIVATE
     SQLITE_THREADSAFE=1
     SQLITE_OMIT_LOAD_EXTENSION

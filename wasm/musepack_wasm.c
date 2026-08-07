@@ -169,7 +169,7 @@ int mpc_wasm_open_range(int h, double size, int read_fn, int seek_fn,
     wasm_handle *hnd = wasm_get_handle(h);
     musepack_error err = MUSEPACK_OK;
 
-    if (hnd == 0 || size <= 0 || read_fn <= 0 || seek_fn <= 0 || tell_fn <= 0)
+    if (hnd == 0 || size <= 0 || read_fn < 0 || seek_fn < 0 || tell_fn < 0)
         return MUSEPACK_ERR_INVALID;
     if (hnd->decoder != 0) {
         musepack_decoder_close(hnd->decoder);

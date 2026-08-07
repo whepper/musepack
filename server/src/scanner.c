@@ -17,7 +17,9 @@
 #include <musicpack/checksum.h>
 
 #ifdef _WIN32
+# include <io.h>
 # include <sys/stat.h>
+# include <dirent.h> /* win32/dirent.h via include path */
 #else
 # include <dirent.h>
 # include <sys/stat.h>
