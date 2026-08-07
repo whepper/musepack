@@ -111,32 +111,36 @@ int TestProfileParams ( PsyModel* m )
 
 void SetQualityParams (PsyModel * m, float qual )
 {
-	int    i;
+	int    i, j;
 	float  mix;
 
 	qual = clip(qual, 0., 10.);
 
 	i   = (int) qual + PROFILE_PRE2_TELEPHONE;
 	mix = qual - (int) qual;
+	// At qual == 10 (PROFILE_POST2_BRAINDEAD) i+1 would read past the table;
+	// mix is 0 there so the interpolated term contributes nothing. Clamping
+	// the second index keeps the result identical while staying in bounds.
+	j   = i == PROFILE_POST2_BRAINDEAD ? i : i + 1;
 
 	m->MainQual       = i;
 	m->FullQual       = qual + PROFILE_PRE2_TELEPHONE;
-	m->ShortThr       = Profiles [i].ShortThr   * (1-mix) + Profiles [i+1].ShortThr   * mix;
+	m->ShortThr       = Profiles [i].ShortThr   * (1-mix) + Profiles [j].ShortThr   * mix;
 	m->MinValChoice   = Profiles [i].MinValChoice  ;
 	m->EarModelFlag   = Profiles [i].EarModelFlag  ;
-	m->Ltq_offset     = Profiles [i].Ltq_offset * (1-mix) + Profiles [i+1].Ltq_offset * mix;
-	m->varLtq         = Profiles [i].varLtq     * (1-mix) + Profiles [i+1].varLtq     * mix;
-	m->Ltq_max        = Profiles [i].Ltq_max    * (1-mix) + Profiles [i+1].Ltq_max    * mix;
-	m->TMN            = Profiles [i].TMN        * (1-mix) + Profiles [i+1].TMN        * mix;
-	m->NMT            = Profiles [i].NMT        * (1-mix) + Profiles [i+1].NMT        * mix;
+	m->Ltq_offset     = Profiles [i].Ltq_offset * (1-mix) + Profiles [j].Ltq_offset * mix;
+	m->varLtq         = Profiles [i].varLtq     * (1-mix) + Profiles [j].varLtq     * mix;
+	m->Ltq_max        = Profiles [i].Ltq_max    * (1-mix) + Profiles [j].Ltq_max    * mix;
+	m->TMN            = Profiles [i].TMN        * (1-mix) + Profiles [j].TMN        * mix;
+	m->NMT            = Profiles [i].NMT        * (1-mix) + Profiles [j].NMT        * mix;
 	m->minSMR         = Profiles [i].minSMR        ;
-	m->BandWidth      = Profiles [i].BandWidth  * (1-mix) + Profiles [i+1].BandWidth  * mix;
+	m->BandWidth      = Profiles [i].BandWidth  * (1-mix) + Profiles [j].BandWidth  * mix;
 	m->tmpMask_used   = Profiles [i].tmpMask_used  ;
 	m->CVD_used       = Profiles [i].CVD_used      ;
 	m->MS_Channelmode = Profiles [i].MS_Channelmode;
 	m->CombPenalities = Profiles [i].CombPenalities;
 	m->NS_Order       = Profiles [i].NS_Order      ;
-	m->PNS            = Profiles [i].PNS        * (1-mix) + Profiles [i+1].PNS        * mix;
-	m->TransDetect    = Profiles [i].TransDetect* (1-mix) + Profiles [i+1].TransDetect* mix;
+	m->PNS            = Profiles [i].PNS        * (1-mix) + Profiles [j].PNS        * mix;
+	m->TransDetect    = Profiles [i].TransDetect* (1-mix) + Profiles [j].TransDetect* mix;
 }
 

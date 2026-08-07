@@ -59,12 +59,12 @@ static mpc_inline mpc_uint32_t mpc_bits_read(mpc_bits_reader * r, const unsigned
 
 	ret = (r->buff[0] | (r->buff[-1] << 8)) >> r->count;
 	if (nb_bits > (16 - r->count)) {
-		ret |= (mpc_uint32_t)((r->buff[-2] << 16) | (r->buff[-3] << 24)) >> r->count;
+		ret |= (mpc_uint32_t)(((mpc_uint32_t)r->buff[-2] << 16) | ((mpc_uint32_t)r->buff[-3] << 24)) >> r->count;
 		if (nb_bits > 24 && r->count != 0)
-			ret |= r->buff[-4] << (32 - r->count);
+			ret |= (mpc_uint32_t)r->buff[-4] << (32 - r->count);
 	}
 
-	return ret & ((1 << nb_bits) - 1);
+	return ret & ((1u << nb_bits) - 1);
 }
 
 // basic huffman decoding routine
@@ -144,7 +144,7 @@ static mpc_inline mpc_uint32_t mpc_bits_enum_dec(mpc_bits_reader * r, mpc_uint_t
 	do {
 		n--;
 		if (code >= C[n]) {
-			bits |= 1 << n;
+			bits |= 1u << n;
 			code -= C[n];
 			C -= MAX_ENUM;
 			k--;

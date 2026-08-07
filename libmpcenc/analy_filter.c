@@ -158,28 +158,28 @@ Vectoring ( const float* x, float* y )
     i++;
     *y++ = EXPR ((Ci_opt+128),(x+31));
 
-    c1 = Ci_opt - 8;
-    c2 = Ci_opt + 128;
+    c1 = Ci_opt;
+    c2 = Ci_opt + 136;
     x1 = x + 16;
     x2 = x + 31;
     do {
         x1--, x2--, i++;
-        c1 += 8, c2 += 8;
         *y++ = EXPR (c1,x1) + EXPR (c2,x2);
+        c1 += 8, c2 += 8;
     } while ( i < 16 );
 
     i++;
     *y++ = EXPR ((Ci_opt+120),(x+0)) + EXPR ((Ci_opt+256),(x+32));
 
-    c1 = Ci_opt + 384 - 8;
-    c2 = Ci_opt + 256;
+    c1 = Ci_opt + 384;
+    c2 = Ci_opt + 264;
     x1 = x + 47;
     x2 = x + 32;
 
     do {
         x1++, x2++, i++;
-        c1 += 8, c2 += 8;
         *y++ = EXPR (c1,x1) + EXPR (c2,x2);
+        c1 += 8, c2 += 8;
     } while ( i < 32 );
 #else
     int           i;

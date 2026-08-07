@@ -340,7 +340,10 @@ Spread ( PsyModel* m )
 void
 Init_Psychoakustiktabellen ( PsyModel* m )
 {
-	m->Max_Band = (int) ( m->BandWidth * 64. / m->SampleFreq );
+	// BandWidth/SampleFreq are both 0.0 before the command line is parsed
+	// (see Init_Psychoakustik); guard the division so 0/0 cannot yield a NaN
+	// cast to int. The 1..31 clamps below make the result identical either way.
+	m->Max_Band = m->SampleFreq != 0. ? (int)(m->BandWidth * 64. / m->SampleFreq) : 0;
 	if ( m->Max_Band <  1 ) m->Max_Band =  1;
 	if ( m->Max_Band > 31 ) m->Max_Band = 31;
 
