@@ -61,6 +61,7 @@ jobs:
             -S "$RUNNER_TEMP/musepack-ref" -B "$RUNNER_TEMP/ref-build"
 
       - name: Build reference encoder
+        shell: bash
         run: cmake --build "$RUNNER_TEMP/ref-build" --config Release -j --target mpcenc
 
       - name: Test (compat)
