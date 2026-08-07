@@ -65,7 +65,7 @@ static uint64_t decode_all(musepack_decoder *d, uint64_t *last_frames)
     return total;
 }
 
-/* Deterministic PCM checksum: sum of quantized samples mod 2^32. */
+/* Deterministic PCM checksum: sum of raw float bits mod 2^32. */
 static unsigned long pcm_checksum(musepack_decoder *d)
 {
     static float pcm[MUSEPACK_FRAME_MAX * 2];
@@ -75,8 +75,11 @@ static unsigned long pcm_checksum(musepack_decoder *d)
     musepack_decoder_seek_sample(d, 0);
     while (musepack_decoder_read(d, pcm, MUSEPACK_FRAME_MAX, &frames) == MUSEPACK_OK) {
         uint64_t i;
-        for (i = 0; i < frames; i++)
-            sum += (unsigned long) (pcm[i] * 1000.0f);
+        for (i = 0; i < frames; i++) {
+            unsigned int bits;
+            memcpy(&bits, &pcm[i], sizeof bits);
+            sum += bits;
+        }
     }
     return sum;
 }
