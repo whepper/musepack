@@ -62,6 +62,26 @@ if(WIN32)
       ENVIRONMENT "PATH=$<TARGET_FILE_DIR:musepack>$<SEMICOLON>$<TARGET_FILE_DIR:musicpack>$<SEMICOLON>$ENV{PATH}")
 endif()
 
+# ---- musicpack-server core unit tests (all platforms) ---------------------
+add_executable(mpc_server_tests server_tests.c)
+target_link_libraries(mpc_server_tests PRIVATE musicpack_server)
+target_include_directories(mpc_server_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/server/vendor/sqlite)
+if(WIN32)
+  target_include_directories(mpc_server_tests PRIVATE ${PROJECT_SOURCE_DIR}/win32)
+endif()
+if(UNIX AND NOT APPLE)
+  target_link_libraries(mpc_server_tests PRIVATE m)
+endif()
+
+add_test(NAME server_unit COMMAND mpc_server_tests
+    ${CMAKE_CURRENT_SOURCE_DIR}/reference/test-musicpack-album.mpack
+    ${CMAKE_CURRENT_SOURCE_DIR}/reference/test-flac-album.mpack)
+if(WIN32)
+  set_tests_properties(server_unit PROPERTIES
+      ENVIRONMENT "PATH=$<TARGET_FILE_DIR:musepack>$<SEMICOLON>$<TARGET_FILE_DIR:musicpack>$<SEMICOLON>$ENV{PATH}")
+endif()
+
 # ---- shell-based integration / robustness tests (UNIX only) ---------------
 if(UNIX)
     # Fixture regression: decode(fixture.mpc) must equal the golden .wav.
@@ -108,6 +128,14 @@ if(UNIX)
                      ${CMAKE_CURRENT_SOURCE_DIR}/run_meta_fuzz.sh
                      $<TARGET_FILE:mpc_mpack_tests>
                      ${CMAKE_CURRENT_SOURCE_DIR}/reference/meta)
+
+    # Phase 4: musicpack-server HTTP API + direct streaming (needs the server
+    # executable, which is only built when libmicrohttpd is available).
+    if(MICROHTTPD_FOUND)
+        add_test(NAME server_integration
+                 COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/run_server.sh
+                         $<TARGET_FILE:musicpack_server_cmd>)
+    endif()
 endif()
 
 # ---- Bit-identity with the pristine reference encoder ----------------------
