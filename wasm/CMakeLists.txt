@@ -11,16 +11,15 @@ target_link_libraries(musepack_wasm PRIVATE musepack)
 set_target_properties(musepack_wasm PROPERTIES OUTPUT_NAME musepack)
 
 # Single-threaded, no SharedArrayBuffer, no experimental extensions.
-# ASYNCIFY lets the JS range reader (mpc_wasm_open_range, backed by the
-# declared imports in range_library.js) block on HTTP Range fetches, so
-# decoder reads/seeks go over the wire.
+# The range reader (mpc_wasm_open_range) reads through the declared imports
+# in range_library.js; the Phase 4 demo serves them synchronously from a
+# buffer fetched from the server over HTTP Range, so no Asyncify is needed.
 target_link_options(musepack_wasm PRIVATE
     "-O3"
     "-sALLOW_MEMORY_GROWTH=1"
     "-sFILESYSTEM=0"
     "-sMODULARIZE=1"
     "-sEXPORT_NAME=createMusepackModule"
-    "-sASYNCIFY=1"
     "--js-library=${CMAKE_CURRENT_SOURCE_DIR}/range_library.js"
     "-sEXPORTED_FUNCTIONS=_mpc_wasm_create,_mpc_wasm_open,_mpc_wasm_open_range,_mpc_wasm_sample_rate,_mpc_wasm_channels,_mpc_wasm_stream_version,_mpc_wasm_length_samples,_mpc_wasm_position,_mpc_wasm_read,_mpc_wasm_seek_sample,_mpc_wasm_seek_seconds,_mpc_wasm_check,_mpc_wasm_destroy,_malloc,_free"
     "-sEXPORTED_RUNTIME_METHODS=HEAPU8,HEAPF32"

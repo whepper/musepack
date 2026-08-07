@@ -5,7 +5,7 @@
  *   1. the memory reader (mpc_wasm_open) — the historical path;
  *   2. the JS-callback range reader (mpc_wasm_open_range) backed by a fake
  *      byte-range source — this is the musicpack-server HTTP Range reader
- *      plumbing, exercised end-to-end in Node (Asyncify + addFunction).
+ *      plumbing, exercised end-to-end in Node.
  * Verifies both produce identical PCM and that seeking works over the range
  * reader, then writes the memory-path PCM to a 16-bit WAV. The WAV is
  * compared against the golden fixture by tests/run_wasm_smoke.sh.
@@ -95,7 +95,7 @@ require(moduleJs)().then(async (Module) => {
   const h2 = Module._mpc_wasm_create();
   if (h2 < 0) fail("mpc_wasm_create (range) failed");
   let rpos = 0;
-  Module.mpcRangeRead = async function (ptr, size) {
+  Module.mpcRangeRead = function (ptr, size) {
     const n = Math.min(size, bytes.length - rpos);
     if (n <= 0) return 0;
     Module.HEAPU8.set(bytes.subarray(rpos, rpos + n), ptr);

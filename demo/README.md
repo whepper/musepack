@@ -68,25 +68,28 @@ No encoder fixtures ship with the demo; encode any WAV first with the native
 ## Streaming from a musicpack-server (Phase 4)
 
 The demo can play a Musepack track served by `musicpack-server` directly over
-HTTP Range, using the JS-callback range reader (`demo/rangereader.js` +
+HTTP Range, using the JS range reader (`demo/rangereader.js` +
 `mpc_wasm_open_range`):
 
 ```text
 musicpack-server
-     ↓  HTTP Range (206)
-RangeReader (fetch + chunk cache)
-     ↓  libmusepack.wasm (Asyncify-suspended reader calls)
+     ↓  HTTP Range (206), chunked fetch
+RangeReader (assembles the original bytes)
+     ↓  libmusepack.wasm (JS-callback reader)
 PCM  →  Web Audio
 ```
 
 Enter the server base URL (e.g. `http://127.0.0.1:8080`), press "Load albums
-from server", pick a track, Play. The decoder's reads and seeks issue real
-Range requests, so scrubbing exercises the server's byte-serving. Bytes are
-never transcoded or rewritten; the served file is the original `.mpc`.
+from server", pick a track, Play. The track bytes are fetched with
+`Range: bytes=...` requests (each answered 206) and decoded through
+`mpc_wasm_open_range`, whose reads/seeks go through JS callbacks. Bytes are
+never transcoded or rewritten; the served file is the original `.mpc`, and the
+server-side Range semantics (206/416, byte-identity) are covered exhaustively
+by `tests/run_server.sh`.
 
-The WASM module is built with `-sASYNCIFY` so the decoder can block on the
-async range fetches; decoder calls that touch the reader return a Promise and
-must be awaited (the worker and `smoke.js` do this).
+Seeking is served from the fetched buffer (the reader stays synchronous and
+the decoder single-threaded); a future SAB/Atomics-backed reader can go fully
+demand-driven behind the same imports without changing the decoder.
 
 ## Intended architecture (next step)
 

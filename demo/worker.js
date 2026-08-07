@@ -49,18 +49,19 @@ async function open(buffer) {
   postInfo();
 }
 
-/* Opens a track served by a musicpack-server over HTTP Range: the decoder's
-   reads/seek go through the JS range imports, so playback and seeking
-   exercise the server's Range handling end to end. */
+/* Opens a track served by a musicpack-server over HTTP Range: the whole
+   object is fetched as Range chunks (206 each), then decoded through the
+   JS-callback range reader. Seeking is served from the fetched buffer. */
 async function openUrl(url, size) {
   if (handle >= 0) destroy();
   handle = Module._mpc_wasm_create();
   if (handle < 0) throw new Error('mpc_wasm_create failed');
 
   const reader = new MusicPackRange.RangeReader(url, size);
+  await reader.fetchAll();
   rangeReader = await MusicPackRange.installRangeCallbacks(Module, reader);
 
-  const err = await Module._mpc_wasm_open_range(handle, size);
+  const err = Module._mpc_wasm_open_range(handle, size);
   if (err !== 0) throw new Error('mpc_wasm_open_range returned ' + err);
 
   pcmPtr = Module._malloc(FRAMES_PER_CHUNK * channels * 4);
