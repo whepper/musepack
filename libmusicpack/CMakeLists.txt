@@ -12,6 +12,9 @@ set(MUSICPACK_SOURCES
     src/checksum.c
     src/loudness.c
     src/path.c
+    src/meta/tag.c
+    src/meta/vorbis.c
+    src/meta/flac.c
     vendor/cjson/cJSON.c
     vendor/ebur128/ebur128.c)
 

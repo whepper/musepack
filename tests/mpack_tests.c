@@ -779,15 +779,335 @@ test_open_flac(const char *dir)
 }
 
 /* ------------------------------------------------------------------ */
+/* Phase 3A meta: tag-set model, Vorbis Comment, FLAC metadata reader  */
+/* ------------------------------------------------------------------ */
+
+static unsigned char *
+build_vorbis_block(const char *vendor, const char *const *tags, size_t ntags,
+                   size_t *outlen)
+{
+    size_t cap = 8 + strlen(vendor);
+    size_t i, p = 0;
+    unsigned char *buf;
+
+    for (i = 0; i < ntags; i++)
+        cap += 4 + strlen(tags[i]);
+    buf = (unsigned char *) malloc(cap);
+    if (buf == 0)
+        return 0;
+    {
+        unsigned len = (unsigned) strlen(vendor);
+        buf[p++] = (unsigned char) len;
+        buf[p++] = (unsigned char) (len >> 8);
+        buf[p++] = (unsigned char) (len >> 16);
+        buf[p++] = (unsigned char) (len >> 24);
+        memcpy(buf + p, vendor, len);
+        p += len;
+    }
+    {
+        unsigned n = (unsigned) ntags;
+        buf[p++] = (unsigned char) n;
+        buf[p++] = (unsigned char) (n >> 8);
+        buf[p++] = (unsigned char) (n >> 16);
+        buf[p++] = (unsigned char) (n >> 24);
+    }
+    for (i = 0; i < ntags; i++) {
+        size_t clen = strlen(tags[i]);
+        unsigned len = (unsigned) clen;
+        buf[p++] = (unsigned char) len;
+        buf[p++] = (unsigned char) (len >> 8);
+        buf[p++] = (unsigned char) (len >> 16);
+        buf[p++] = (unsigned char) (len >> 24);
+        memcpy(buf + p, tags[i], clen);
+        p += clen;
+    }
+    *outlen = p;
+    return buf;
+}
+
+static void
+test_utf8_valid(void)
+{
+    CHECK(musicpack_utf8_valid((const unsigned char *) "abc", 3) == 1, "ascii ok");
+    {
+        const unsigned char e[] = { 0xC3, 0xA9 }; /* é */
+        CHECK(musicpack_utf8_valid(e, 2) == 1, "2-byte utf8 ok");
+    }
+    {
+        const unsigned char bad[] = { 0xC0, 0xAF }; /* overlong */
+        CHECK(musicpack_utf8_valid(bad, 2) == 0, "overlong rejected");
+    }
+    {
+        const unsigned char bad[] = { 0xED, 0xA0, 0x80 }; /* surrogate */
+        CHECK(musicpack_utf8_valid(bad, 3) == 0, "surrogate rejected");
+    }
+    {
+        const unsigned char bad[] = { 0x80 }; /* continuation lead */
+        CHECK(musicpack_utf8_valid(bad, 1) == 0, "continuation rejected");
+    }
+    {
+        const unsigned char bad[] = { 0xF4, 0x90, 0x80, 0x80 }; /* > U+10FFFF */
+        CHECK(musicpack_utf8_valid(bad, 4) == 0, "out-of-range rejected");
+    }
+}
+
+static void
+test_tag_set(void)
+{
+    musicpack_tag_set s;
+    const musicpack_tag *t;
+    const musicpack_tag *all[8];
+    size_t n;
+    unsigned char bin[] = { 0x89, 0x50, 0x4E, 0x47 };
+
+    CHECK(musicpack_tag_set_init(&s, "test") == MUSICPACK_OK, "init");
+    CHECK(musicpack_tag_set_add(&s, "TITLE", "Big in Japan", 12) == MUSICPACK_OK,
+          "add text");
+    CHECK(musicpack_tag_set_add(&s, "artist", "Alphaville", 10) == MUSICPACK_OK,
+          "add lowercase key");
+    CHECK(musicpack_tag_set_add(&s, "GENRE", "Synthpop", 8) == MUSICPACK_OK,
+          "add genre");
+    CHECK(musicpack_tag_set_add(&s, "GENRE", "New Wave", 8) == MUSICPACK_OK,
+          "add repeated key");
+    /* case-insensitive lookup, first match */
+    t = musicpack_tag_set_get(&s, "title");
+    CHECK(t != 0 && strcmp(t->value, "Big in Japan") == 0, "get case-insensitive");
+    CHECK(musicpack_tag_set_get(&s, "MISSING") == 0, "get missing");
+    n = musicpack_tag_set_get_all(&s, "genre", all, 8);
+    CHECK(n == 2, "get_all returns both values");
+    CHECK(strcmp(all[0]->value, "Synthpop") == 0, "get_all order 1");
+    CHECK(strcmp(all[1]->value, "New Wave") == 0, "get_all order 2");
+
+    /* binary item */
+    CHECK(musicpack_tag_set_add_binary(&s, "Cover Art (Front)", bin, sizeof bin)
+          == MUSICPACK_OK, "add binary");
+    t = musicpack_tag_set_get(&s, "cover art (front)");
+    CHECK(t != 0 && t->is_binary && t->binary_len == sizeof bin, "binary item");
+    CHECK(t != 0 && t->value == 0 && memcmp(t->binary, bin, sizeof bin) == 0,
+          "binary payload");
+
+    /* embedded NUL truncation */
+    CHECK(musicpack_tag_set_add(&s, "NULKEY", "abc\0def", 7) == MUSICPACK_OK,
+          "nul value accepted");
+    t = musicpack_tag_set_get(&s, "nulkey");
+    CHECK(t != 0 && t->value_len == 3 && strcmp(t->value, "abc") == 0,
+          "nul truncated");
+
+    /* invalid inputs rejected */
+    CHECK(musicpack_tag_set_add(&s, "", "x", 1) == MUSICPACK_ERR_INVALID,
+          "empty key rejected");
+    CHECK(musicpack_tag_set_add(&s, "BAD\nKEY", "x", 1) == MUSICPACK_ERR_INVALID,
+          "control-char key rejected");
+    {
+        unsigned char inv[] = { 0xC3 }; /* truncated utf8 */
+        CHECK(musicpack_tag_set_add(&s, "BADVAL", (const char *) inv, 1)
+              == MUSICPACK_ERR_INVALID, "invalid utf8 value rejected");
+    }
+    CHECK(musicpack_tag_set_add(&s, "a", "x", (size_t) -1)
+          == MUSICPACK_ERR_INVALID, "oversized value rejected");
+
+    musicpack_tag_set_free(&s);
+}
+
+static void
+test_vorbis_parse(void)
+{
+    static const char *tags[] = {
+        "TITLE=The Van", "ARTIST=Bleachers", "ARTIST=Jack Antonoff",
+        "TRACKNUMBER=2/12", "MUSICBRAINZ_TRACKID=legacy-recording-id",
+        "EMPTY=", "NOEQUALS-bare-entry",
+    };
+    unsigned char *buf;
+    size_t len;
+    musicpack_tag_set s;
+    const musicpack_tag *t;
+    const musicpack_tag *all[8];
+    size_t n;
+
+    buf = build_vorbis_block("vendor-test", tags, 7, &len);
+    CHECK(buf != 0, "build vorbis block");
+    if (buf == 0)
+        return;
+    CHECK(musicpack_tag_set_init(&s, "test") == MUSICPACK_OK, "init");
+    CHECK(musicpack_vorbis_parse(buf, len, &s) == MUSICPACK_OK, "parse ok");
+    CHECK(strcmp(musicpack_tag_set_get(&s, "TITLE")->value, "The Van") == 0,
+          "title");
+    n = musicpack_tag_set_get_all(&s, "ARTIST", all, 8);
+    CHECK(n == 2, "two artists");
+    CHECK(strcmp(musicpack_tag_set_get(&s, "TRACKNUMBER")->value, "2/12") == 0,
+          "n/total");
+    CHECK(strcmp(musicpack_tag_set_get(&s, "MUSICBRAINZ_TRACKID")->value,
+                 "legacy-recording-id") == 0, "legacy MB track id");
+    t = musicpack_tag_set_get(&s, "EMPTY");
+    CHECK(t != 0 && t->value_len == 0, "empty value preserved");
+    /* bare entries without '=' are skipped, not added */
+    CHECK(musicpack_tag_set_get(&s, "NOEQUALS-bare-entry") == 0, "bare entry skipped");
+    musicpack_tag_set_free(&s);
+
+    /* truncation mid-field must fail, not over-read */
+    CHECK(musicpack_tag_set_init(&s, "test") == MUSICPACK_OK, "init2");
+    CHECK(musicpack_vorbis_parse(buf, len / 2, &s) == MUSICPACK_ERR_INVALID,
+          "truncated block rejected");
+    musicpack_tag_set_free(&s);
+    free(buf);
+}
+
+static void
+test_vorbis_read_file(const char *path)
+{
+    musicpack_tag_set s;
+
+    CHECK(musicpack_tag_set_init(&s, "test") == MUSICPACK_OK, "init");
+    CHECK(musicpack_vorbis_read(path, &s) == MUSICPACK_OK, "vorbis_read ok");
+    CHECK(strcmp(musicpack_tag_set_get(&s, "TITLE")->value, "Big in Japan") == 0,
+          "title from file");
+    CHECK(strcmp(musicpack_tag_set_get(&s, "SOURCE")->value, "Deezer") == 0,
+          "source from file");
+    musicpack_tag_set_free(&s);
+}
+
+static void
+test_flac_metadata(const char *dir)
+{
+    char path[1024];
+    musicpack_tag_set c;
+    musicpack_pictures p;
+    const musicpack_tag *all[8];
+    size_t n;
+
+    snprintf(path, sizeof path, "%s/album-vorbis.flac", dir);
+    CHECK(musicpack_tag_set_init(&c, "test") == MUSICPACK_OK, "init");
+    CHECK(musicpack_flac_read_metadata(path, &c, &p) == MUSICPACK_OK, "flac read ok");
+    CHECK(strcmp(musicpack_tag_set_get(&c, "TITLE")->value, "Big in Japan") == 0,
+          "title");
+    n = musicpack_tag_set_get_all(&c, "ARTIST", all, 8);
+    CHECK(n == 2, "two artists");
+    CHECK(strcmp(musicpack_tag_set_get(&c, "ALBUM")->value,
+                 "Synthetic Test Album") == 0, "album");
+    CHECK(strcmp(musicpack_tag_set_get(&c, "ALBUMARTIST")->value,
+                 "Alphaville") == 0, "albumartist");
+    CHECK(strcmp(musicpack_tag_set_get(&c, "TRACKNUMBER")->value, "3/12") == 0,
+          "tracknumber n/total");
+    CHECK(strcmp(musicpack_tag_set_get(&c, "DISCNUMBER")->value, "1/1") == 0,
+          "discnumber n/total");
+    CHECK(strcmp(musicpack_tag_set_get(&c, "DATE")->value, "2016-09-23") == 0,
+          "date");
+    CHECK(strcmp(musicpack_tag_set_get(&c, "ORIGINALDATE")->value,
+                 "1984-06-01") == 0, "originaldate");
+    n = musicpack_tag_set_get_all(&c, "GENRE", all, 8);
+    CHECK(n == 2, "two genres");
+    CHECK(strcmp(musicpack_tag_set_get(&c, "PUBLISHER")->value,
+                 "Example Records") == 0, "publisher");
+    CHECK(strcmp(musicpack_tag_set_get(&c, "CATALOGNUMBER")->value,
+                 "ERCD 001") == 0, "catalog number");
+    CHECK(strcmp(musicpack_tag_set_get(&c, "BARCODE")->value,
+                 "198704979941") == 0, "barcode");
+    CHECK(strcmp(musicpack_tag_set_get(&c, "ISRC")->value, "GBK3W2503556") == 0,
+          "isrc");
+    CHECK(strcmp(musicpack_tag_set_get(&c, "MUSICBRAINZ_ALBUMID")->value,
+                 "11111111-2222-3333-4444-555555555555") == 0, "mb album id");
+    CHECK(strcmp(musicpack_tag_set_get(&c, "MUSICBRAINZ_RELEASEGROUPID")->value,
+                 "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee") == 0, "mb release group");
+    CHECK(strcmp(musicpack_tag_set_get(&c, "MUSICBRAINZ_RECORDINGID")->value,
+                 "12121212-3434-5656-7878-909090909090") == 0, "mb recording id");
+    CHECK(strcmp(musicpack_tag_set_get(&c, "MUSICBRAINZ_RELEASETRACKID")->value,
+                 "23232323-4545-6767-8989-abababababab") == 0, "mb release track");
+    CHECK(strcmp(musicpack_tag_set_get(&c, "SOURCE")->value, "Deezer") == 0,
+          "source");
+    CHECK(strcmp(musicpack_tag_set_get(&c, "SOURCEID")->value, "3810015612") == 0,
+          "source id");
+    CHECK(strcmp(musicpack_tag_set_get(&c, "LYRICS")->value,
+                 "Line one\nLine two") == 0, "lyrics multi-line");
+    CHECK(strcmp(musicpack_tag_set_get(&c, "CUSTOM_X")->value, "survives") == 0,
+          "custom tag preserved");
+    CHECK(strcmp(musicpack_tag_set_get(&c, "title")->value, "Big in Japan") == 0,
+          "case-insensitive get");
+
+    CHECK(p.count == 2, "two pictures");
+    if (p.count >= 1) {
+        CHECK(p.items[0].type == 3, "front picture type");
+        CHECK(p.items[0].mime != 0 && strcmp(p.items[0].mime, "image/png") == 0,
+              "front mime");
+        CHECK(p.items[0].width == 8 && p.items[0].height == 8, "front dims");
+        CHECK(p.items[0].data_len > 0 && p.items[0].data[0] == 0x89,
+              "png magic preserved");
+    }
+    if (p.count >= 2) {
+        CHECK(p.items[1].type == 4, "back picture type");
+        CHECK(p.items[1].mime != 0 && strcmp(p.items[1].mime, "image/jpeg") == 0,
+              "back mime");
+        CHECK(p.items[1].data_len > 0 && p.items[1].data[0] == 0xFF,
+              "jpeg magic preserved");
+    }
+    musicpack_tag_set_free(&c);
+    musicpack_pictures_free(&p);
+}
+
+static void
+test_flac_negatives(const char *dir)
+{
+    char path[1024];
+    musicpack_tag_set c;
+    musicpack_pictures p;
+
+    /* notags: valid FLAC, no comment/picture blocks */
+    snprintf(path, sizeof path, "%s/notags.flac", dir);
+    CHECK(musicpack_tag_set_init(&c, "test") == MUSICPACK_OK, "init");
+    CHECK(musicpack_flac_read_metadata(path, &c, &p) == MUSICPACK_OK, "notags ok");
+    CHECK(c.count == 0 && p.count == 0, "no tags no pictures");
+    musicpack_tag_set_free(&c);
+    musicpack_pictures_free(&p);
+
+    /* bad magic */
+    snprintf(path, sizeof path, "%s/bad-magic.flac", dir);
+    CHECK(musicpack_tag_set_init(&c, "test") == MUSICPACK_OK, "init");
+    CHECK(musicpack_flac_read_metadata(path, &c, &p) == MUSICPACK_ERR_INVALID,
+          "bad magic rejected");
+    musicpack_tag_set_free(&c);
+    musicpack_pictures_free(&p);
+
+    /* truncated inside the comment block */
+    snprintf(path, sizeof path, "%s/truncated.flac", dir);
+    CHECK(musicpack_tag_set_init(&c, "test") == MUSICPACK_OK, "init");
+    CHECK(musicpack_flac_read_metadata(path, &c, &p) == MUSICPACK_ERR_INVALID,
+          "truncated flac rejected");
+    musicpack_tag_set_free(&c);
+    musicpack_pictures_free(&p);
+
+    /* block length past EOF */
+    snprintf(path, sizeof path, "%s/oversized.flac", dir);
+    CHECK(musicpack_tag_set_init(&c, "test") == MUSICPACK_OK, "init");
+    CHECK(musicpack_flac_read_metadata(path, &c, &p) == MUSICPACK_ERR_INVALID,
+          "oversized block rejected");
+    musicpack_tag_set_free(&c);
+    musicpack_pictures_free(&p);
+}
+
+/* ------------------------------------------------------------------ */
 /* main                                                                */
 /* ------------------------------------------------------------------ */
 
 int main(int argc, char **argv)
 {
+    const char *metadir = 0;
+
+    if (argc >= 3 && strcmp(argv[1], "--parse-meta") == 0) {
+        /* fuzz mode: parse a FLAC file; a crash is a signal exit (>=128) */
+        musicpack_tag_set c;
+        musicpack_pictures p;
+        musicpack_tag_set_init(&c, "fuzz");
+        musicpack_flac_read_metadata(argv[2], &c, &p);
+        musicpack_tag_set_free(&c);
+        musicpack_pictures_free(&p);
+        return 0;
+    }
     if (argc < 3) {
-        fprintf(stderr, "usage: %s <mpc-album.mpack> <flac-album.mpack>\n", argv[0]);
+        fprintf(stderr, "usage: %s <mpc-album.mpack> <flac-album.mpack> [meta-dir]\n",
+                argv[0]);
         return 2;
     }
+    if (argc >= 4)
+        metadir = argv[3];
     test_parse_valid();
     test_parse_invalid();
     test_unknown_field_roundtrip();
@@ -805,6 +1125,17 @@ int main(int argc, char **argv)
     test_determinism();
     test_open_musicpack(argv[1]);
     test_open_flac(argv[2]);
+
+    if (metadir != 0) {
+        char vorbis_path[1024];
+        test_utf8_valid();
+        test_tag_set();
+        test_vorbis_parse();
+        snprintf(vorbis_path, sizeof vorbis_path, "%s/vorbis-comment.bin", metadir);
+        test_vorbis_read_file(vorbis_path);
+        test_flac_metadata(metadir);
+        test_flac_negatives(metadir);
+    }
 
     if (failures) {
         fprintf(stderr, "%d mpack test(s) failed\n", failures);

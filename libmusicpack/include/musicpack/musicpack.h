@@ -50,5 +50,6 @@
 #include <musicpack/checksum.h>
 #include <musicpack/loudness.h>
 #include <musicpack/path.h>
+#include <musicpack/meta.h>
 
 #endif /* MUSICPACK_H_ */

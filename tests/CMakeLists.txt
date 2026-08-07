@@ -55,7 +55,8 @@ target_include_directories(mpc_mpack_tests PRIVATE ${PROJECT_SOURCE_DIR}/libmusi
 
 add_test(NAME mpack COMMAND mpc_mpack_tests
     ${CMAKE_CURRENT_SOURCE_DIR}/reference/test-musicpack-album.mpack
-    ${CMAKE_CURRENT_SOURCE_DIR}/reference/test-flac-album.mpack)
+    ${CMAKE_CURRENT_SOURCE_DIR}/reference/test-flac-album.mpack
+    ${CMAKE_CURRENT_SOURCE_DIR}/reference/meta)
 if(WIN32)
   set_tests_properties(mpack PROPERTIES
       ENVIRONMENT "PATH=$<TARGET_FILE_DIR:musepack>$<SEMICOLON>$<TARGET_FILE_DIR:musicpack>$<SEMICOLON>$ENV{PATH}")
@@ -99,6 +100,14 @@ if(UNIX)
                      ${CMAKE_CURRENT_SOURCE_DIR}/run_mpack_fuzz.sh
                      $<TARGET_FILE:musicpack_cmd>
                      ${CMAKE_CURRENT_SOURCE_DIR}/reference/test-musicpack-album.mpack)
+
+    # Phase 3A meta fuzz-lite: truncated/flipped FLAC metadata files parsed
+    # through the libmusicpack tag readers (no crash = pass).
+    add_test(NAME meta_fuzz
+             COMMAND ${CMAKE_COMMAND} -E env
+                     ${CMAKE_CURRENT_SOURCE_DIR}/run_meta_fuzz.sh
+                     $<TARGET_FILE:mpc_mpack_tests>
+                     ${CMAKE_CURRENT_SOURCE_DIR}/reference/meta)
 endif()
 
 # ---- Bit-identity with the pristine reference encoder ----------------------
