@@ -18,6 +18,16 @@ jobs:
         with:
           fetch-depth: 0   # needed to build the reference encoder at 05d97a5
 
+      - name: Install libmicrohttpd
+        if: matrix.os != 'windows-latest'
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            sudo apt-get update && sudo apt-get install -y libmicrohttpd-dev
+          else
+            brew install libmicrohttpd
+          fi
+
       - name: Configure
         run: >
           cmake -S . -B build
@@ -29,9 +39,11 @@ jobs:
         run: cmake --build build --config Release -j
 
       # C unit tests run everywhere; the shell-based integration/fuzz/fixture
-      # suites (bash + python3) are UNIX-only.
-      - name: Test (unit + mpack)
-        run: ctest --test-dir build -C Release -R "^(unit|mpack)$" --output-on-failure
+      # suites (bash + python3) are UNIX-only. server_unit builds on Windows
+      # too (the server core is platform-independent; the HTTP server itself
+      # is not built there since libmicrohttpd is unavailable).
+      - name: Test (unit + mpack + server)
+        run: ctest --test-dir build -C Release -R "^(unit|mpack|server_unit)$" --output-on-failure
 
       - name: Test (integration + fuzz + fixtures)
         if: matrix.os != 'windows-latest'
