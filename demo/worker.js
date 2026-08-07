@@ -1,0 +1,122 @@
+/*
+ * Demo worker: owns the libmusepack WASM module and decodes PCM off the UI
+ * thread. The message protocol here is deliberately a pure decode/PCM
+ * streaming contract so the same {pcm} messages can later feed an
+ * AudioWorklet (see audio-worklet.js) without changing the worker.
+ *
+ *   main -> worker  { type:'open', buffer } | { type:'play' } | { type:'pause' }
+ *                   { type:'seek', sample } | { type:'close' }
+ *   worker -> main  { type:'info', rate, channels, version, lengthSamples }
+ *                   { type:'pcm', samples: Float32Array } | { type:'eos' }
+ *                   { type:'error', message }
+ */
+
+importScripts('musepack.js');
+
+const FRAMES_PER_CHUNK = 8 * 1152; // 8 decoder frames per message
+
+let Module = null;
+let handle = -1;
+let heapPtr = 0;
+let pcmPtr = 0;
+let channels = 2;
+let playing = false;
+let eos = false;
+let pumping = false;
+
+function post(msg) { self.postMessage(msg, msg.samples ? [msg.samples.buffer] : undefined); }
+
+async function init() {
+  if (Module) return;
+  Module = await createMusepackModule();
+}
+
+async function open(buffer) {
+  if (handle >= 0) destroy();
+  handle = Module._mpc_wasm_create();
+  if (handle < 0) throw new Error('mpc_wasm_create failed');
+
+  heapPtr = Module._malloc(buffer.byteLength);
+  Module.HEAPU8.set(new Uint8Array(buffer), heapPtr);
+
+  const err = Module._mpc_wasm_open(handle, heapPtr, buffer.byteLength);
+  if (err !== 0) throw new Error('mpc_wasm_open returned ' + err);
+
+  const rate = Module._mpc_wasm_sample_rate(handle);
+  channels = Module._mpc_wasm_channels(handle);
+  pcmPtr = Module._malloc(FRAMES_PER_CHUNK * channels * 4);
+
+  post({
+    type: 'info',
+    rate,
+    channels,
+    version: Module._mpc_wasm_stream_version(handle),
+    lengthSamples: Module._mpc_wasm_length_samples(handle),
+  });
+}
+
+function destroy() {
+  if (handle >= 0) {
+    if (pcmPtr) Module._free(pcmPtr);
+    if (heapPtr) Module._free(heapPtr);
+    Module._mpc_wasm_destroy(handle);
+  }
+  handle = -1; heapPtr = 0; pcmPtr = 0;
+}
+
+function readChunk() {
+  const frames = Module._mpc_wasm_read(handle, pcmPtr, FRAMES_PER_CHUNK);
+  if (frames < 0) {
+    if (frames === -5) { // MUSEPACK_ERR_EOF
+      eos = true;
+      post({ type: 'eos' });
+    } else {
+      post({ type: 'error', message: 'mpc_wasm_read returned ' + frames });
+    }
+    return;
+  }
+  if (frames === 0) {
+    eos = true;
+    post({ type: 'eos' });
+    return;
+  }
+  const view = new Float32Array(Module.HEAPF32.buffer, pcmPtr, frames * channels);
+  post({ type: 'pcm', samples: view.slice() });
+}
+
+function pump() {
+  if (!playing || eos || handle < 0) { pumping = false; return; }
+  readChunk();
+  setTimeout(pump, 0); // keep the worker responsive
+}
+
+self.onmessage = async (ev) => {
+  const msg = ev.data;
+  try {
+    await init();
+    switch (msg.type) {
+      case 'open':
+        await open(msg.buffer);
+        break;
+      case 'play':
+        playing = true;
+        if (!pumping) { pumping = true; pump(); }
+        break;
+      case 'pause':
+        playing = false;
+        break;
+      case 'seek':
+        if (handle >= 0) {
+          Module._mpc_wasm_seek_sample(handle, msg.sample);
+          eos = false;
+          post({ type: 'seeked', sample: msg.sample });
+        }
+        break;
+      case 'close':
+        destroy();
+        break;
+    }
+  } catch (e) {
+    post({ type: 'error', message: String(e) });
+  }
+};
