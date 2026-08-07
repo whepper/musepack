@@ -50,19 +50,13 @@ jobs:
       - name: Configure reference encoder
         shell: bash
         run: |
-          # The pristine build fails to configure unless libreplaygain and
-          # libcuefile are present (mpcgain/mpcchap); disable those subdirs.
-          sed -i 's/^add_subdirectory(mpcgain)/#add_subdirectory(mpcgain)/' \
-            "$RUNNER_TEMP/musepack-ref/CMakeLists.txt"
-          sed -i 's/^add_subdirectory(mpcchap)/#add_subdirectory(mpcchap)/' \
-            "$RUNNER_TEMP/musepack-ref/CMakeLists.txt"
-          # Match the main build's optimization so outputs are comparable:
-          # Unix uses the default (-O0), Windows uses --config Release (/O2).
-          # GCC 14+ treats -Wincompatible-pointer-types as an error; the
-          # reference code triggers it (ans.c, mpcenc.c), so downgrade it.
-          if [ "$RUNNER_OS" != "Windows" ]; then
-            sed -i 's/set(CMAKE_C_FLAGS "-O3 -Wall -fomit-frame-pointer -pipe")/set(CMAKE_C_FLAGS "-O0 -Wall -fomit-frame-pointer -pipe -Wno-error=incompatible-pointer-types")/' "$RUNNER_TEMP/musepack-ref/CMakeLists.txt"
-          fi
+          # Keep only the encoder targets (libmpcpsy/libmpcenc/mpcenc): the
+          # pristine tree cannot configure otherwise (mpcgain/mpcchap need
+          # external libs; mpcdec/mpc2sv8/mpccut declare duplicate targets
+          # under MSVC). Also aligns -O3 to -O0 and downgrades
+          # -Wincompatible-pointer-types (an error on GCC 14+).
+          PY="$(command -v python3 || command -v python)"
+          "$PY" "$GITHUB_WORKSPACE/tests/patch_reference.py" "$RUNNER_TEMP/musepack-ref"
           cmake -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
             -S "$RUNNER_TEMP/musepack-ref" -B "$RUNNER_TEMP/ref-build"
 

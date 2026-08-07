@@ -80,17 +80,21 @@ To build the reference commit in a separate worktree:
 
 ```sh
 git worktree add --detach /tmp/musepack-ref 05d97a5
-# reference CMakeLists hardcodes CMAKE_C_FLAGS ("-O3 ..."); it OVERRIDES any
-# -DCMAKE_C_FLAGS you pass. Edit that line in the worktree copy to change
-# optimization/flag settings.
-# mpcgain/mpcchap subdirs hard-fail configure without libreplaygain/libcuefile;
-# comment out those add_subdirectory() lines.
+python3 tests/patch_reference.py /tmp/musepack-ref
 cmake -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -S /tmp/musepack-ref -B /tmp/ref-build
 cmake --build /tmp/ref-build -j --target mpcenc
 python3 tests/generate_corpus.py /tmp/corpus
 # then SHA-256 every encode at Q{3,5,7} -> tests/reference_manifest.txt
 # (or run tests/run_compat.sh <your-mpcenc> /tmp/ref-build/mpcenc/mpcenc for live mode)
 ```
+
+`tests/patch_reference.py` makes the pristine tree configure cleanly on CI:
+it keeps only the encoder subdirs (`libmpcpsy`/`libmpcenc`/`mpcenc`/`include`),
+because `mpcgain`/`mpcchap` hard-fail without libreplaygain/libcuefile and
+`mpcdec`/`mpc2sv8`/`mpccut` declare duplicate `add_executable` targets under
+MSVC. It also rewrites the reference's hardcoded `-O3` CFLAGS to `-O0`
+(matching the default CI build) and adds `-Wno-error=incompatible-pointer-types`
+for GCC 14+.
 
 Verified facts (from the compatibility audit):
 - Reference vs modernized are byte-identical at matched optimization
