@@ -249,6 +249,83 @@ else
     fail "same album, two distinct editions"
 fi
 
+# 7. real metadata import: embedded tags drive the manifest, flags override
+META="$REF/meta"
+TAGSRC="$TMP/tagsrc"
+mkdir -p "$TAGSRC"
+cp "$META/album-vorbis.flac" "$TAGSRC/01 - Big in Japan.flac"
+TAGIMP="$TMP/tagimport.mpack"
+if "$MUSICPACK" import -L -o "$TAGIMP" "$TAGSRC" >/dev/null 2>&1; then
+    pass "import reads embedded tags"
+else
+    fail "import reads embedded tags"
+fi
+if python3 - "$TAGIMP/manifest.json" <<'EOF'
+import json, sys
+m = json.load(open(sys.argv[1]))
+assert m["album"]["title"] == "Synthetic Test Album", "album title from tag"
+assert m["album"]["artists"][0]["name"] == "Alphaville", "album artist from tag"
+assert m["album"]["originalReleaseDate"] == "1984-06-01"
+assert m["album"]["genres"] == ["Synthpop", "New Wave"]
+assert m["release"]["releaseDate"] == "2016-09-23"
+assert m["release"]["label"] == "Example Records"
+assert m["release"]["catalogueNumber"] == "ERCD 001"
+assert m["identifiers"]["barcode"] == "198704979941"
+assert m["identifiers"]["musicbrainzReleaseId"] == "11111111-2222-3333-4444-555555555555"
+assert m["identifiers"]["musicbrainzReleaseGroupId"] == "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+assert m["source"]["store"] == "Deezer" and m["source"]["type"] == "digital-download"
+t = m["media"][0]["tracks"][0]
+assert t["title"] == "Big in Japan", "track title from tag"
+assert t["track"] == 3, "track number from tag"
+assert t["identifiers"]["isrc"] == "GBK3W2503556"
+assert t["identifiers"]["musicbrainzRecordingId"] == "12121212-3434-5656-7878-909090909090"
+assert t["identifiers"]["musicbrainzTrackId"] == "23232323-4545-6767-8989-abababababab"
+assert t["source"]["store"] == "Deezer" and t["source"]["trackId"] == "3810015612"
+print("ok")
+EOF
+then
+    pass "tag-driven manifest fields (FLAC/Vorbis)"
+else
+    fail "tag-driven manifest fields (FLAC/Vorbis)"
+fi
+
+# 7b. APEv2 tags on an existing .mpc are read too
+APESRC="$TMP/apesrc"
+mkdir -p "$APESRC"
+cp "$META/album-ape.mpc" "$APESRC/09 - whatever.mpc"
+if "$MUSICPACK" import -L -o "$TMP/apeimp.mpack" "$APESRC" >/dev/null 2>&1 \
+   && python3 - "$TMP/apeimp.mpack/manifest.json" <<'EOF'
+import json, sys
+m = json.load(open(sys.argv[1]))
+assert m["album"]["title"] == "Synthetic Test Album", "ape album"
+t = m["media"][0]["tracks"][0]
+assert t["title"] == "Big in Japan", "ape track title"
+assert t["track"] == 3, "ape track number"
+assert t["source"]["store"] == "Deezer", "ape source store"
+print("ok")
+EOF
+then
+    pass "tag-driven manifest fields (MPC/APEv2)"
+else
+    fail "tag-driven manifest fields (MPC/APEv2)"
+fi
+
+# 7c. explicit flags still override tags
+if "$MUSICPACK" import -L -o "$TMP/override.mpack" -t "Override Title" \
+    -a "Override Artist" "$TAGSRC" >/dev/null 2>&1 \
+   && python3 - "$TMP/override.mpack/manifest.json" <<'EOF'
+import json, sys
+m = json.load(open(sys.argv[1]))
+assert m["album"]["title"] == "Override Title"
+assert m["album"]["artists"][0]["name"] == "Override Artist"
+print("ok")
+EOF
+then
+    pass "flags override tags"
+else
+    fail "flags override tags"
+fi
+
 echo
 echo "== $PASSED passed, $FAILED failed =="
 [ "$FAILED" -eq 0 ]

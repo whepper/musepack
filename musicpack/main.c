@@ -834,6 +834,8 @@ typedef struct {
     char *src_rel;   /* relative to source root */
     char *title;     /* without extension or number prefix */
     char *ext;       /* original file extension incl. dot (".mpc") */
+    musicpack_tag_set tags;  /* embedded metadata; empty when untagged */
+    int has_tags;
 } import_track;
 
 static int
@@ -859,6 +861,48 @@ usage_import(void)
         "       release: -d RELEASE_DATE  -R RELEASE_TYPE  -O ORIGINAL_RELEASE_DATE\n"
         "                -e EDITION  -l LABEL  -c CATALOGUE  -C COUNTRY\n"
         "                -m MEDIUM_FORMAT  -N NOTES\n");
+}
+
+/* Reads embedded metadata into it->tags (best-effort: read failures leave the
+   set empty and has_tags=0). FLAC uses Vorbis Comments, Musepack uses APEv2. */
+static void
+read_track_tags(import_track *it, const char *srcpath)
+{
+    const char *dot = strrchr(it->src_rel, '.');
+
+    it->has_tags = 0;
+    if (dot == 0)
+        return;
+    if (strcmp(dot, ".flac") == 0) {
+        if (musicpack_flac_read_metadata(srcpath, &it->tags, 0) == MUSICPACK_OK)
+            it->has_tags = 1;
+    } else if (strcmp(dot, ".mpc") == 0) {
+        if (musicpack_ape_read(srcpath, &it->tags) == MUSICPACK_OK)
+            it->has_tags = 1;
+    }
+}
+
+/* Reads a positive integer tag field, accepting the Vorbis and APEv2 key
+   spellings. Returns 1 on success. */
+static int
+tag_int_field(const musicpack_tag_set *tags, const char *vorbis_key,
+              const char *ape_key, int *out)
+{
+    const musicpack_tag *t = musicpack_tag_set_get(tags, vorbis_key);
+    if (t == 0 || t->is_binary)
+        t = musicpack_tag_set_get(tags, ape_key);
+    if (t == 0 || t->is_binary)
+        return 0;
+    return musicpack_meta_parse_track_number(t->value, out);
+}
+
+/* Replaces characters that are illegal inside a single path component. */
+static void
+sanitize_component(char *s)
+{
+    for (; *s != '\0'; s++)
+        if (*s == '/' || *s == '\\' || *s == ':')
+            *s = '-';
 }
 
 static int
@@ -890,7 +934,7 @@ cmd_import(int argc, char **argv)
     size_t i;
     int bad = 0;
 
-    while ((c = getopt(argc, argv, "o:t:a:L:d:R:O:e:l:c:C:m:N:")) != -1) {
+    while ((c = getopt(argc, argv, "o:t:a:Ld:R:O:e:l:c:C:m:N:")) != -1) {
         switch (c) {
         case 'o': out_dir = optarg; break;
         case 't': title = optarg; break;
@@ -924,12 +968,14 @@ cmd_import(int argc, char **argv)
         const char *rel = files[i];
         const char *first, *rest, *dot;
         int disc = 1;
+        int from_dir = 0;
 
         split_segments(rel, &first, &rest);
         if (rest != 0) {
             disc = disc_from_dirname(first);
             if (disc == 0)
                 continue; /* ignore files under non-disc subdirectories */
+            from_dir = 1;
             rel = rest;
         }
         if (strcmp(rel, "cover.jpg") == 0 || strcmp(rel, "cover.png") == 0 ||
@@ -1002,6 +1048,24 @@ cmd_import(int argc, char **argv)
                         tracks[track_count].ext = strdup("");
                 }
             }
+            /* embedded metadata takes precedence over filename heuristics */
+            snprintf(srcpath, sizeof srcpath, "%s/%s", src, files[i]);
+            read_track_tags(&tracks[track_count], srcpath);
+            if (tracks[track_count].has_tags) {
+                import_track *it = &tracks[track_count];
+                const musicpack_tag *tv;
+                int num;
+                if (tag_int_field(&it->tags, "TRACKNUMBER", "Track", &num))
+                    it->number = num;
+                tv = musicpack_tag_set_get(&it->tags, "TITLE");
+                if (tv != 0 && !tv->is_binary && tv->value != 0 && *tv->value != '\0') {
+                    free(it->title);
+                    it->title = strdup(tv->value);
+                }
+                if (!from_dir &&
+                    tag_int_field(&it->tags, "DISCNUMBER", "Disc", &num))
+                    it->disc = num;
+            }
             track_count++;
         }
     }
@@ -1012,23 +1076,34 @@ cmd_import(int argc, char **argv)
         return 1;
     }
 
-    /* sort by (disc, explicit number if present, filename), then renumber
-       contiguously within each disc for deterministic, gapless numbering. */
+    /* sort by (disc, explicit number if present, filename). Renumber a disc
+       contiguously only when it has tracks without explicit numbers; explicit
+       numbers from tags are authoritative and preserved. */
     qsort(tracks, track_count, sizeof *tracks, cmp_import_tracks);
-    {
-        int cur_disc = 0, seq = 1;
-        for (i = 0; i < track_count; i++) {
-            if (tracks[i].disc != cur_disc) {
-                cur_disc = tracks[i].disc;
-                seq = 1;
-            }
-            tracks[i].number = seq++;
+    i = 0;
+    while (i < track_count) {
+        int disc = tracks[i].disc;
+        size_t j = i;
+        int all_have = 1;
+        while (j < track_count && tracks[j].disc == disc) {
+            if (tracks[j].number <= 0)
+                all_have = 0;
+            j++;
         }
+        if (!all_have) {
+            int seq = 1;
+            size_t k;
+            for (k = i; k < j; k++)
+                tracks[k].number = seq++;
+        }
+        i = j;
     }
 
-    /* build package */
+    /* build package: explicit flags first, then embedded metadata fills the
+       gaps (first-wins), then the folder name is the title fallback. */
     memset(&m, 0, sizeof m);
-    m.album_title = strdup(title != 0 ? title : src);
+    if (title != 0)
+        m.album_title = strdup(title);
     m.album_artists = (musicpack_artist *) calloc(artist_count, sizeof *m.album_artists);
     for (i = 0; i < artist_count; i++)
         m.album_artists[i].name = strdup(artists[i]);
@@ -1046,6 +1121,17 @@ cmd_import(int argc, char **argv)
     if (catalogue != 0) { m.release.present = 1; m.release.catalogue_number = strdup(catalogue); }
     if (country != 0) { m.release.present = 1; m.release.country = strdup(country); }
     if (notes != 0) { m.release.present = 1; m.release.notes = strdup(notes); }
+
+    if (track_count > 0 && tracks[0].has_tags) {
+        musicpack_status st = musicpack_tag_map_album(&tracks[0].tags, &m);
+        if (st != MUSICPACK_OK) {
+            fprintf(stderr, "cannot read album metadata\n");
+            bad = 1;
+            goto cleanup;
+        }
+    }
+    if (m.album_title == 0)
+        m.album_title = strdup(src);
 
     snprintf(audio_dir, sizeof audio_dir, "%s/audio", out_dir);
     snprintf(art_dir, sizeof art_dir, "%s/artwork", out_dir);
@@ -1085,10 +1171,25 @@ cmd_import(int argc, char **argv)
                                                    (disc->track_count + 1) * sizeof *disc->tracks);
         t = &disc->tracks[disc->track_count];
         memset(t, 0, sizeof *t);
-        t->number = it->number;
-        t->title = strdup(it->title);
-        snprintf(target, sizeof target, "%s/%02d - %s%s", audio_dir, t->number,
-                 it->title, it->ext != 0 ? it->ext : "");
+        if (it->has_tags) {
+            musicpack_status st = musicpack_tag_map_track(&it->tags, t);
+            if (st != MUSICPACK_OK) {
+                fprintf(stderr, "cannot read track metadata\n");
+                bad = 1;
+                break;
+            }
+        }
+        if (t->number == 0)
+            t->number = it->number;
+        if (t->title == 0)
+            t->title = strdup(it->title);
+        {
+            char fname[MUSICPACK_PATH_MAX + 2];
+            snprintf(fname, sizeof fname, "%s", t->title != 0 ? t->title : "");
+            sanitize_component(fname);
+            snprintf(target, sizeof target, "%s/%02d - %s%s", audio_dir, t->number,
+                     fname, it->ext != 0 ? it->ext : "");
+        }
         snprintf(srcpath, sizeof srcpath, "%s/%s", src, it->src_rel);
 
         if (copy_file(srcpath, target) != 0) {
@@ -1229,10 +1330,12 @@ cmd_import(int argc, char **argv)
         }
     }
 
+cleanup:
     /* free model */
     musicpack_manifest_clear(&m);
     musicpack_meter_free(album_meter);
     for (i = 0; i < track_count; i++) {
+        musicpack_tag_set_free(&tracks[i].tags);
         free(tracks[i].src_rel);
         free(tracks[i].title);
         free(tracks[i].ext);

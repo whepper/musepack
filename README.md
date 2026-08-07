@@ -101,11 +101,14 @@ musepack_decoder *d = musepack_decoder_open(&reader, 0);
 The `musicpack` CLI (`musicpack info|verify|create|import`) builds, inspects
 and validates directory-form packages. `info` shows collector identity
 (release type, edition, release/original dates, country, label, catalogue
-number, medium, barcode); `create`/`import` accept release options and
-`import` never invents edition/country/label/catalogue/type from filenames.
-The normative spec and machine-readable schema live in `specs/musicpack-v1.md`
-and `specs/musicpack-v1.schema.json`; committed reference packages (a Musepack
-album and a FLAC album) are under `tests/reference/`.
+number, medium, barcode); `create`/`import` accept release options. `import`
+reads embedded metadata (Vorbis Comments from FLAC, APEv2 from `.mpc`) to
+fill album/track/release/identifier/source fields — explicit flags override
+tags, and it never invents edition/country/label/catalogue/type from
+filenames. The normative spec and machine-readable schema live in
+`specs/musicpack-v1.md` and `specs/musicpack-v1.schema.json`; committed
+reference packages (a Musepack album and a FLAC album) are under
+`tests/reference/`.
 
 ## Tools
 
