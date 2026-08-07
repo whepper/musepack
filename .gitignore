@@ -47,3 +47,7 @@ tests/fixtures/_src.wav
 .DS_Store
 *.swp
 *~
+
+# Generated WASM demo artifacts (see demo/build.sh)
+demo/musepack.js
+demo/musepack.wasm

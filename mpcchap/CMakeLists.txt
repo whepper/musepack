@@ -23,7 +23,7 @@ target_include_directories(mpcchap PRIVATE
     ${CUEFILE_INCLUDE_DIR}
     ${PROJECT_SOURCE_DIR}/libmpcdec
     ${PROJECT_SOURCE_DIR}/libmpcenc)
-target_link_libraries(mpcchap PRIVATE mpcdec mpcenc_static ${CUEFILE_LIBRARY})
+target_link_libraries(mpcchap PRIVATE musepack mpcenc_static ${CUEFILE_LIBRARY})
 
 if(NOT MSVC)
   target_link_libraries(mpcchap PRIVATE m)

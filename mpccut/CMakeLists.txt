@@ -10,7 +10,7 @@ endif()
 
 add_executable(mpccut ${MPCCUT_SOURCES})
 target_include_directories(mpccut PRIVATE ${MPCCUT_INCLUDES})
-target_link_libraries(mpccut PRIVATE mpcdec mpcenc_static)
+target_link_libraries(mpccut PRIVATE musepack mpcenc_static)
 
 if(NOT MSVC)
   target_link_libraries(mpccut PRIVATE m)

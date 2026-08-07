@@ -88,9 +88,9 @@ else
 fi
 
 # 6. Seeking: decode and check total decoded samples matches stream length
-LEN="$($MPCDEC -i "$OUT" 2>&1 | grep -oE '\([0-9]+ samples\)' | tr -d '()')"
+LEN="$("$MPCDEC" -i "$OUT" 2>&1 | grep -oE '\([0-9]+ samples\)' | tr -d '()')"
 SAMPLES="${LEN%% *}"
-DECCNT="$($MPCDEC "$OUT" "$TMP/seek.wav" 2>&1 | grep -oE '^[0-9]+ samples' | awk '{print $1}')"
+DECCNT="$("$MPCDEC" "$OUT" "$TMP/seek.wav" 2>&1 | grep -oE '^[0-9]+ samples' | awk '{print $1}')"
 if [ -n "$SAMPLES" ] && [ "$DECCNT" = "$SAMPLES" ]; then
     pass "decode sample count ($SAMPLES)"
 else

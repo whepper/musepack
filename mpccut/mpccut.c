@@ -81,7 +81,7 @@ int main(int argc, char **argv)
 	mpc_demux* demux;
 	mpc_streaminfo si;
 	mpc_encoder_t e;
-	unsigned char buffer[16];
+	unsigned char buffer[4 + 16];
 	mpc_bits_reader r;
 	mpc_block b;
 	mpc_uint64_t size;
@@ -160,8 +160,8 @@ int main(int argc, char **argv)
 	in_file = fopen(argv[optind], "rb");
 	i = si.header_position + 4;
 	mpc_file_seek(in_file, i, SEEK_SET);
-	fread(buffer, 1, 16, in_file);
-	r.buff = buffer;
+	fread(buffer + 4, 1, 16, in_file);
+	r.buff = buffer + 4;
 	r.count = 8;
 	size = mpc_bits_get_block(&r, &b);
 
@@ -174,8 +174,8 @@ int main(int argc, char **argv)
 			copy_data(in_file, i, e.outputFile, b.size + size);
 		i += b.size + size;
 		mpc_file_seek(in_file, i, SEEK_SET);
-		fread(buffer, 1, 16, in_file);
-		r.buff = buffer;
+		fread(buffer + 4, 1, 16, in_file);
+		r.buff = buffer + 4;
 		r.count = 8;
 		size = mpc_bits_get_block(&r, &b);
 	}
@@ -195,8 +195,8 @@ int main(int argc, char **argv)
 			start_block--;
 		i += b.size + size;
 		mpc_file_seek(in_file, i, SEEK_SET);
-		fread(buffer, 1, 16, in_file);
-		r.buff = buffer;
+		fread(buffer + 4, 1, 16, in_file);
+		r.buff = buffer + 4;
 		r.count = 8;
 		size = mpc_bits_get_block(&r, &b);
 	}
@@ -217,8 +217,8 @@ int main(int argc, char **argv)
 		}
 		i += b.size + size;
 		mpc_file_seek(in_file, i, SEEK_SET);
-		fread(buffer, 1, 16, in_file);
-		r.buff = buffer;
+		fread(buffer + 4, 1, 16, in_file);
+		r.buff = buffer + 4;
 		r.count = 8;
 		size = mpc_bits_get_block(&r, &b);
 	}

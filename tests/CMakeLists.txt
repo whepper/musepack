@@ -1,9 +1,26 @@
 # Tests for the Musepack libraries and tools. Only included when
 # MPC_BUILD_TESTS is ON (see the top-level CMakeLists.txt).
 
+# The WebAssembly build is decoder-only (no encoder/tools), so the only
+# applicable test is the WASM smoke test.
+if(EMSCRIPTEN)
+  add_test(NAME wasm_smoke
+           COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/run_wasm_smoke.sh
+                   ${CMAKE_BINARY_DIR})
+  return()
+endif()
+
 # ---- C unit tests (link against the real libraries) ------------------------
+# The unit suite is white-box: it reaches into private decoder headers, so it
+# links the static variant when a shared library is being built.
+if(MPC_BUILD_SHARED)
+  set(MPC_WHITEBOX_LIB musepack_static)
+else()
+  set(MPC_WHITEBOX_LIB musepack)
+endif()
+
 add_executable(mpc_unit_tests unit_tests.c)
-target_link_libraries(mpc_unit_tests PRIVATE mpcdec mpcenc_static)
+target_link_libraries(mpc_unit_tests PRIVATE ${MPC_WHITEBOX_LIB} mpcenc_static)
 target_include_directories(mpc_unit_tests PRIVATE
     ${PROJECT_SOURCE_DIR}/libmpcdec
     ${PROJECT_SOURCE_DIR}/libmpcenc)
@@ -12,7 +29,20 @@ add_test(NAME unit COMMAND mpc_unit_tests)
 if(WIN32)
   # The shared libmpcdec DLL must be findable at runtime.
   set_tests_properties(unit PROPERTIES
-      ENVIRONMENT "PATH=$<TARGET_FILE_DIR:mpcdec>$<SEMICOLON>$ENV{PATH}")
+      ENVIRONMENT "PATH=$<TARGET_FILE_DIR:musepack>$<SEMICOLON>$ENV{PATH}")
+endif()
+
+# ---- stable libmusepack API tests -----------------------------------------
+add_executable(mpc_api_tests api_tests.c)
+target_link_libraries(mpc_api_tests PRIVATE musepack)
+target_include_directories(mpc_api_tests PRIVATE ${PROJECT_SOURCE_DIR}/libmpcdec)
+
+add_test(NAME api COMMAND mpc_api_tests
+    ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/sine44-q5.mpc
+    ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/sine48-q6.mpc)
+if(WIN32)
+  set_tests_properties(api PROPERTIES
+      ENVIRONMENT "PATH=$<TARGET_FILE_DIR:musepack>$<SEMICOLON>$ENV{PATH}")
 endif()
 
 # ---- shell-based integration / robustness tests (UNIX only) ---------------

@@ -13,7 +13,7 @@ endif()
 
 add_executable(mpc2sv8 ${MPC2SV8_SOURCES})
 target_include_directories(mpc2sv8 PRIVATE ${MPC2SV8_INCLUDES})
-target_link_libraries(mpc2sv8 PRIVATE mpcdec mpcenc_static)
+target_link_libraries(mpc2sv8 PRIVATE musepack mpcenc_static)
 
 if(WIN32)
   target_link_libraries(mpc2sv8 PRIVATE winmm)
