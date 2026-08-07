@@ -651,6 +651,130 @@ cmd_identify(const char *dir, const char *mb_json_path)
 }
 
 /* ------------------------------------------------------------------ */
+/* command: update-metadata                                            */
+/* ------------------------------------------------------------------ */
+
+static void
+usage_update_metadata(void)
+{
+    fprintf(stderr,
+        "usage: musicpack update-metadata <package> [--sync-tags]\n"
+        "       --sync-tags: rewrite APEv2 tags on .mpc tracks from the\n"
+        "       manifest and refresh their checksums\n");
+}
+
+/* Reads embedded tags from a package audio file (FLAC Vorbis / MPC APEv2). */
+static int
+read_package_track_tags(const char *apath, musicpack_tag_set *tags)
+{
+    const char *dot = strrchr(apath, '.');
+    if (dot == 0)
+        return 0;
+    if (strcmp(dot, ".flac") == 0)
+        return musicpack_flac_read_metadata(apath, tags, 0) == MUSICPACK_OK;
+    if (strcmp(dot, ".mpc") == 0)
+        return musicpack_ape_read(apath, tags) == MUSICPACK_OK;
+    return 0;
+}
+
+static int
+cmd_update_metadata(const char *dir, int sync_tags)
+{
+    musicpack_package *pkg;
+    musicpack_manifest *m;
+    musicpack_status s;
+    size_t d, t;
+    int album_done = 0, hash_changed = 0, reconciled = 0;
+
+    pkg = musicpack_package_open_dir(dir, &s);
+    if (pkg == 0) {
+        fprintf(stderr, "cannot open package '%s'\n", dir);
+        return 1;
+    }
+    m = musicpack_package_manifest_mutable(pkg);
+
+    /* album-level: fill empty fields from the first audio track's tags */
+    for (d = 0; d < m->disc_count && !album_done; d++)
+        for (t = 0; t < m->discs[d].track_count && !album_done; t++) {
+            char apath[MUSICPACK_PATH_MAX + 2];
+            musicpack_tag_set tags;
+            if (musicpack_package_track_path(pkg, d, t, apath, sizeof apath)
+                != MUSICPACK_OK)
+                continue;
+            memset(&tags, 0, sizeof tags);
+            if (read_package_track_tags(apath, &tags)) {
+                if (musicpack_tag_map_album(&tags, m) == MUSICPACK_OK)
+                    reconciled = 1;
+                album_done = 1;
+            }
+            musicpack_tag_set_free(&tags);
+        }
+
+    /* per-track reconcile, then optional manifest -> APEv2 re-projection */
+    for (d = 0; d < m->disc_count; d++) {
+        musicpack_disc *disc = &m->discs[d];
+        for (t = 0; t < disc->track_count; t++) {
+            musicpack_track *tr = &disc->tracks[t];
+            char apath[MUSICPACK_PATH_MAX + 2];
+            musicpack_tag_set tags;
+            const char *dot;
+
+            if (musicpack_package_track_path(pkg, d, t, apath, sizeof apath)
+                != MUSICPACK_OK)
+                continue;
+            memset(&tags, 0, sizeof tags);
+            if (read_package_track_tags(apath, &tags)) {
+                if (musicpack_tag_map_track(&tags, tr) == MUSICPACK_OK)
+                    reconciled = 1;
+            }
+            musicpack_tag_set_free(&tags);
+
+            dot = strrchr(apath, '.');
+            if (sync_tags && dot != 0 && strcmp(dot, ".mpc") == 0) {
+                musicpack_tag_set ape;
+                char hex[MUSICPACK_SHA256_HEX_SIZE];
+                if (musicpack_manifest_to_ape_tags(m, tr, disc->disc,
+                                                   (int) m->disc_count,
+                                                   (int) disc->track_count,
+                                                   &ape) == MUSICPACK_OK) {
+                    if (musicpack_ape_write(apath, &ape) == MUSICPACK_OK &&
+                        musicpack_sha256_file(apath, hex, sizeof hex)
+                            == MUSICPACK_OK) {
+                        free(tr->audio.sha256);
+                        tr->audio.sha256 = strdup(hex);
+                        hash_changed = 1;
+                    } else {
+                        fprintf(stderr,
+                                "update-metadata: cannot re-tag '%s'\n",
+                                tr->audio.path);
+                    }
+                    musicpack_tag_set_free(&ape);
+                }
+            } else if (sync_tags && dot != 0 && strcmp(dot, ".flac") == 0) {
+                fprintf(stderr,
+                        "update-metadata: --sync-tags only writes APEv2 (.mpc); "
+                        "skipping '%s'\n", tr->audio.path);
+            }
+        }
+    }
+
+    if (reconciled || hash_changed) {
+        if (musicpack_package_save_manifest(pkg) != MUSICPACK_OK) {
+            fprintf(stderr, "update-metadata: cannot save manifest\n");
+            musicpack_package_close(pkg);
+            return 1;
+        }
+        printf("update-metadata: manifest updated (%s)\n",
+               hash_changed ? "tags synced and checksums refreshed" : "reconciled");
+    } else {
+        printf("update-metadata: no changes\n");
+    }
+
+    musicpack_package_close(pkg);
+    return 0;
+}
+
+/* ------------------------------------------------------------------ */
 /* command: create                                                     */
 /* ------------------------------------------------------------------ */
 
@@ -1784,7 +1908,7 @@ main(int argc, char **argv)
 
     fprintf(stderr, "%s", ABOUT);
     if (argc < 2) {
-        fprintf(stderr, "usage: musicpack <info|verify|identify|create|import> ...\n");
+        fprintf(stderr, "usage: musicpack <info|verify|identify|create|import|update-metadata> ...\n");
         return 2;
     }
     cmd = argv[1];
@@ -1820,5 +1944,22 @@ main(int argc, char **argv)
         return cmd_create(argc - 1, argv + 1);
     if (strcmp(cmd, "import") == 0)
         return cmd_import(argc - 1, argv + 1);
+    if (strcmp(cmd, "update-metadata") == 0) {
+        const char *dir = 0;
+        int sync = 0, i;
+        for (i = 2; i < argc; i++) {
+            if (strcmp(argv[i], "--sync-tags") == 0)
+                sync = 1;
+            else if (dir == 0)
+                dir = argv[i];
+            else
+                return usage_error("too many arguments");
+        }
+        if (dir == 0) {
+            usage_update_metadata();
+            return 2;
+        }
+        return cmd_update_metadata(dir, sync);
+    }
     return usage_error("unknown command");
 }

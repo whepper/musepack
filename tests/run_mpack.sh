@@ -365,6 +365,58 @@ else
     fail "identify without evidence leaves identity untouched"
 fi
 
+# 9. update-metadata --sync-tags writes manifest metadata into .mpc tags and
+# refreshes checksums; the metadata round-trips through a re-import
+SYNC="$TMP/sync.mpack"
+if "$MUSICPACK" create -o "$SYNC" -t "Sync Album" -a "Sync Artist" -m CD \
+    -d 2020-01-01 -R album -l "Sync Label" -c "SYNC 001" \
+    -T "$MPC_REF/audio/01 - Alphaville - Big in Japan.mpc" \
+    -n "Sync Track" >/dev/null 2>&1 \
+   && "$MUSICPACK" update-metadata "$SYNC" --sync-tags >/dev/null 2>&1; then
+    pass "update-metadata --sync-tags"
+else
+    fail "update-metadata --sync-tags"
+fi
+if "$MUSICPACK" verify "$SYNC" >/dev/null 2>&1; then
+    pass "synced package still verifies"
+else
+    fail "synced package still verifies"
+fi
+mkdir -p "$TMP/syncsrc"
+cp "$SYNC"/audio/*.mpc "$TMP/syncsrc/"
+if "$MUSICPACK" import -L -o "$TMP/syncimp.mpack" "$TMP/syncsrc" >/dev/null 2>&1 \
+   && python3 - "$TMP/syncimp.mpack/manifest.json" <<'EOF'
+import json, sys
+m = json.load(open(sys.argv[1]))
+assert m["album"]["title"] == "Sync Album", "album synced to tags"
+assert m["album"]["artists"][0]["name"] == "Sync Artist", "artist synced"
+assert m["album"]["releaseType"] == "album"
+assert m["release"]["releaseDate"] == "2020-01-01"
+assert m["release"]["label"] == "Sync Label"
+assert m["release"]["catalogueNumber"] == "SYNC 001"
+assert m["media"][0]["tracks"][0]["title"] == "Sync Track", "track synced"
+print("ok")
+EOF
+then
+    pass "manifest metadata round-trips through .mpc tags"
+else
+    fail "manifest metadata round-trips through .mpc tags"
+fi
+
+# 9b. unknown fields survive the update-metadata round-trip
+python3 - "$SYNC/manifest.json" <<'EOF'
+import json, sys
+m = json.load(open(sys.argv[1]))
+m["xFutureField"] = {"note": "survives update"}
+json.dump(m, open(sys.argv[1], "w"))
+EOF
+"$MUSICPACK" update-metadata "$SYNC" >/dev/null 2>&1
+if grep -q "xFutureField" "$SYNC/manifest.json"; then
+    pass "unknown fields survive update-metadata"
+else
+    fail "unknown fields survive update-metadata"
+fi
+
 echo
 echo "== $PASSED passed, $FAILED failed =="
 [ "$FAILED" -eq 0 ]

@@ -98,21 +98,23 @@ musicpack_package_track_open_reader(pkg, 0, 0, &reader);
 musepack_decoder *d = musepack_decoder_open(&reader, 0);
 ```
 
-The `musicpack` CLI (`musicpack info|verify|identify|create|import`) builds,
-inspects and validates directory-form packages. `info` shows collector identity
-(release type, edition, release/original dates, country, label, catalogue
-number, medium, barcode); `create`/`import` accept release options. `import`
-reads embedded metadata (Vorbis Comments from FLAC, APEv2 from `.mpc`) to
-fill album/track/release/identifier/source fields — explicit flags override
-tags, and it never invents edition/country/label/catalogue/type from
-filenames. `identify` matches a package against MusicBrainz (exact release
-ID lookup, or barcode search via `curl`; `--mb-json` applies an offline
-release document) and enriches empty fields with honest
-`identity.confidence` (`exact`/`confirmed`/`probable`/`none`) — importing
-never requires a network. The normative spec and machine-readable schema
-live in `specs/musicpack-v1.md` and `specs/musicpack-v1.schema.json`;
-committed reference packages (a Musepack album and a FLAC album) are under
-`tests/reference/`.
+The `musicpack` CLI (`musicpack info|verify|identify|create|import|update-metadata`)
+builds, inspects and validates directory-form packages. `info` shows collector
+identity (release type, edition, release/original dates, country, label,
+catalogue number, medium, barcode); `create`/`import` accept release options.
+`import` reads embedded metadata (Vorbis Comments from FLAC, APEv2 from
+`.mpc`) to fill album/track/release/identifier/source fields — explicit flags
+override tags, and it never invents edition/country/label/catalogue/type from
+filenames. `identify` matches a package against MusicBrainz (exact release ID
+lookup, or barcode search via `curl`; `--mb-json` applies an offline release
+document) and enriches empty fields with honest `identity.confidence`
+(`exact`/`confirmed`/`probable`/`none`) — importing never requires a network.
+`update-metadata` reconciles the manifest from the tracks' tags and, with
+`--sync-tags`, writes the manifest back into `.mpc` APEv2 tags and refreshes
+checksums (unknown fields preserved throughout). The normative spec and
+machine-readable schema live in `specs/musicpack-v1.md` and
+`specs/musicpack-v1.schema.json`; committed reference packages (a Musepack
+album and a FLAC album) are under `tests/reference/`.
 
 ## Tools
 
