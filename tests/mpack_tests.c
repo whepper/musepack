@@ -1213,6 +1213,413 @@ test_ape_write(void)
 }
 
 /* ------------------------------------------------------------------ */
+/* Phase 3A mapping core: tag-set -> manifest, manifest -> APEv2       */
+/* ------------------------------------------------------------------ */
+
+static musicpack_status
+ts_add(musicpack_tag_set *s, const char *key, const char *value)
+{
+    return musicpack_tag_set_add(s, key, value, strlen(value));
+}
+
+static void
+test_meta_helpers(void)
+{
+    int n = 0;
+    CHECK(musicpack_meta_parse_track_number("3", &n) == 1 && n == 3, "track '3'");
+    CHECK(musicpack_meta_parse_track_number("3/12", &n) == 1 && n == 3, "track '3/12'");
+    CHECK(musicpack_meta_parse_track_number("03", &n) == 1 && n == 3, "track '03'");
+    CHECK(musicpack_meta_parse_track_number("abc", &n) == 0, "track 'abc' rejected");
+    CHECK(musicpack_meta_parse_track_number("0", &n) == 0, "track '0' rejected");
+    CHECK(musicpack_meta_parse_track_number("", &n) == 0, "track '' rejected");
+
+    CHECK(strcmp(musicpack_meta_release_type_from_tag("album"), "album") == 0,
+          "type album");
+    CHECK(strcmp(musicpack_meta_release_type_from_tag("single"), "single") == 0,
+          "type single");
+    CHECK(strcmp(musicpack_meta_release_type_from_tag("ep"), "ep") == 0, "type ep");
+    CHECK(strcmp(musicpack_meta_release_type_from_tag("compilation"), "compilation") == 0,
+          "type compilation");
+    CHECK(strcmp(musicpack_meta_release_type_from_tag("soundtrack"), "soundtrack") == 0,
+          "type soundtrack");
+    CHECK(strcmp(musicpack_meta_release_type_from_tag("live"), "live-album") == 0,
+          "type live -> live-album");
+    CHECK(strcmp(musicpack_meta_release_type_from_tag("remix"), "remix-album") == 0,
+          "type remix -> remix-album");
+    CHECK(strcmp(musicpack_meta_release_type_from_tag("demo"), "other") == 0,
+          "type demo -> other");
+    CHECK(strcmp(musicpack_meta_release_type_from_tag("whatever"), "other") == 0,
+          "type unknown -> other");
+    CHECK(musicpack_meta_release_type_from_tag(0) == 0, "type NULL -> NULL");
+    CHECK(musicpack_meta_release_type_from_tag("") == 0, "type empty -> NULL");
+}
+
+static void
+test_map_album_vorbis(void)
+{
+    musicpack_tag_set s;
+    musicpack_manifest m;
+
+    memset(&m, 0, sizeof m);
+    CHECK(musicpack_tag_set_init(&s, "test") == MUSICPACK_OK, "init");
+    CHECK(ts_add(&s, "ALBUM", "Discovery") == MUSICPACK_OK, "album");
+    CHECK(ts_add(&s, "ALBUMARTIST", "Daft Punk") == MUSICPACK_OK, "albumartist");
+    CHECK(ts_add(&s, "ORIGINALDATE", "2001-03-12") == MUSICPACK_OK, "origdate");
+    CHECK(ts_add(&s, "DATE", "2016-09-23") == MUSICPACK_OK, "date");
+    CHECK(ts_add(&s, "GENRE", "Electronic") == MUSICPACK_OK, "genre1");
+    CHECK(ts_add(&s, "GENRE", "House") == MUSICPACK_OK, "genre2");
+    CHECK(ts_add(&s, "PUBLISHER", "Virgin") == MUSICPACK_OK, "publisher");
+    CHECK(ts_add(&s, "CATALOGNUMBER", "8496062") == MUSICPACK_OK, "catalogue");
+    CHECK(ts_add(&s, "BARCODE", "724384960620") == MUSICPACK_OK, "barcode");
+    CHECK(ts_add(&s, "MUSICBRAINZ_ALBUMID", "rel-2001") == MUSICPACK_OK, "mb relid");
+    CHECK(ts_add(&s, "MUSICBRAINZ_RELEASEGROUPID", "rg-2001") == MUSICPACK_OK, "mb rgid");
+    CHECK(ts_add(&s, "MUSICBRAINZ_ALBUMTYPE", "album") == MUSICPACK_OK, "mb type");
+    CHECK(ts_add(&s, "MUSICBRAINZ_ALBUMCOUNTRY", "XE") == MUSICPACK_OK, "mb country");
+    CHECK(ts_add(&s, "SOURCE", "Deezer") == MUSICPACK_OK, "source");
+    CHECK(ts_add(&s, "SOURCEID", "3810015612") == MUSICPACK_OK, "sourceid");
+
+    CHECK(musicpack_tag_map_album(&s, &m) == MUSICPACK_OK, "map album");
+    CHECK(m.album_title != 0 && strcmp(m.album_title, "Discovery") == 0, "title");
+    CHECK(m.album_artist_count == 1, "one album artist");
+    CHECK(m.album_artist_count == 1 && strcmp(m.album_artists[0].name, "Daft Punk") == 0
+          && strcmp(m.album_artists[0].role, "main") == 0, "album artist + role");
+    CHECK(m.release_type != 0 && strcmp(m.release_type, "album") == 0, "release type");
+    CHECK(m.original_release_date != 0 &&
+          strcmp(m.original_release_date, "2001-03-12") == 0, "original date");
+    CHECK(m.genre_count == 2, "two genres");
+    CHECK(m.genre_count == 2 && strcmp(m.genres[0], "Electronic") == 0 &&
+          strcmp(m.genres[1], "House") == 0, "genre values");
+    CHECK(m.release.present == 1, "release present");
+    CHECK(m.release.release_date != 0 &&
+          strcmp(m.release.release_date, "2016-09-23") == 0, "release date");
+    CHECK(m.release.country != 0 && strcmp(m.release.country, "XE") == 0, "country");
+    CHECK(m.release.label != 0 && strcmp(m.release.label, "Virgin") == 0, "label");
+    CHECK(m.release.catalogue_number != 0 &&
+          strcmp(m.release.catalogue_number, "8496062") == 0, "catalogue");
+    CHECK(m.barcode != 0 && strcmp(m.barcode, "724384960620") == 0, "barcode");
+    CHECK(m.musicbrainz_release_id != 0 &&
+          strcmp(m.musicbrainz_release_id, "rel-2001") == 0, "mb release id");
+    CHECK(m.musicbrainz_release_group_id != 0 &&
+          strcmp(m.musicbrainz_release_group_id, "rg-2001") == 0, "mb release group");
+    CHECK(m.source_store != 0 && strcmp(m.source_store, "Deezer") == 0,
+          "source store");
+    CHECK(m.source_type != 0 && strcmp(m.source_type, "digital-download") == 0,
+          "source type");
+    CHECK(m.source_id != 0 && strcmp(m.source_id, "3810015612") == 0, "source id");
+
+    /* identity is never set by tag mapping */
+    CHECK(m.identity_source == 0 && m.identity_confidence == 0, "identity untouched");
+
+    musicpack_manifest_clear(&m);
+    musicpack_tag_set_free(&s);
+}
+
+static void
+test_map_album_ape(void)
+{
+    musicpack_tag_set s;
+    musicpack_manifest m;
+
+    memset(&m, 0, sizeof m);
+    CHECK(musicpack_tag_set_init(&s, "test") == MUSICPACK_OK, "init");
+    CHECK(ts_add(&s, "Album", "Discovery") == MUSICPACK_OK, "album");
+    CHECK(ts_add(&s, "Album Artist", "Daft Punk") == MUSICPACK_OK, "album artist");
+    CHECK(ts_add(&s, "Year", "2016") == MUSICPACK_OK, "year");
+    CHECK(ts_add(&s, "Label", "Virgin") == MUSICPACK_OK, "label");
+    CHECK(ts_add(&s, "CatalogNumber", "8496062") == MUSICPACK_OK, "catalog");
+    CHECK(ts_add(&s, "MusicBrainz Album Id", "rel-2001") == MUSICPACK_OK, "mb id");
+    CHECK(ts_add(&s, "MusicBrainz Release Group Id", "rg-2001") == MUSICPACK_OK, "mb rg");
+    CHECK(ts_add(&s, "MusicBrainz Album Type", "live") == MUSICPACK_OK, "mb type");
+    CHECK(ts_add(&s, "MusicBrainz Album Country", "DE") == MUSICPACK_OK, "mb country");
+
+    CHECK(musicpack_tag_map_album(&s, &m) == MUSICPACK_OK, "map album ape");
+    CHECK(m.album_title != 0 && strcmp(m.album_title, "Discovery") == 0, "title");
+    CHECK(m.release_type != 0 && strcmp(m.release_type, "live-album") == 0,
+          "live -> live-album");
+    CHECK(m.release.release_date != 0 && strcmp(m.release.release_date, "2016") == 0,
+          "year -> release date");
+    CHECK(m.release.country != 0 && strcmp(m.release.country, "DE") == 0, "country");
+    CHECK(m.release.label != 0 && strcmp(m.release.label, "Virgin") == 0, "label");
+    CHECK(m.release.catalogue_number != 0 &&
+          strcmp(m.release.catalogue_number, "8496062") == 0, "catalogue");
+    CHECK(m.musicbrainz_release_id != 0 &&
+          strcmp(m.musicbrainz_release_id, "rel-2001") == 0, "mb release id");
+    CHECK(m.musicbrainz_release_group_id != 0 &&
+          strcmp(m.musicbrainz_release_group_id, "rg-2001") == 0, "mb release group");
+    CHECK(m.album_artist_count == 1 && strcmp(m.album_artists[0].name, "Daft Punk") == 0,
+          "album artist");
+
+    musicpack_manifest_clear(&m);
+    musicpack_tag_set_free(&s);
+}
+
+static void
+test_map_album_first_wins(void)
+{
+    musicpack_tag_set s;
+    musicpack_manifest m;
+
+    memset(&m, 0, sizeof m);
+    CHECK(musicpack_tag_set_init(&s, "test") == MUSICPACK_OK, "init");
+    CHECK(ts_add(&s, "ALBUM", "First Album") == MUSICPACK_OK, "album1");
+    CHECK(ts_add(&s, "ALBUMARTIST", "Artist One") == MUSICPACK_OK, "aa1");
+    CHECK(musicpack_tag_map_album(&s, &m) == MUSICPACK_OK, "map 1");
+
+    CHECK(ts_add(&s, "ALBUM", "Second Album") == MUSICPACK_OK, "album2");
+    CHECK(ts_add(&s, "ALBUMARTIST", "Artist Two") == MUSICPACK_OK, "aa2");
+    CHECK(ts_add(&s, "GENRE", "Jazz") == MUSICPACK_OK, "genre");
+    CHECK(musicpack_tag_map_album(&s, &m) == MUSICPACK_OK, "map 2");
+
+    CHECK(m.album_title != 0 && strcmp(m.album_title, "First Album") == 0,
+          "album title first-wins");
+    CHECK(m.album_artist_count == 1 && strcmp(m.album_artists[0].name, "Artist One") == 0,
+          "album artist first-wins");
+    CHECK(m.genre_count == 1 && strcmp(m.genres[0], "Jazz") == 0, "genre appended once");
+
+    musicpack_manifest_clear(&m);
+    musicpack_tag_set_free(&s);
+}
+
+static void
+test_map_track(void)
+{
+    musicpack_tag_set s;
+    musicpack_track t;
+
+    memset(&t, 0, sizeof t);
+    CHECK(musicpack_tag_set_init(&s, "test") == MUSICPACK_OK, "init");
+    CHECK(ts_add(&s, "TITLE", "Big in Japan") == MUSICPACK_OK, "title");
+    CHECK(ts_add(&s, "TRACKNUMBER", "3/12") == MUSICPACK_OK, "tracknum");
+    CHECK(ts_add(&s, "ARTIST", "Alphaville") == MUSICPACK_OK, "artist");
+    CHECK(ts_add(&s, "COMPOSER", "Bernhard Lloyd") == MUSICPACK_OK, "composer");
+    CHECK(ts_add(&s, "ISRC", "GBK3W2503556") == MUSICPACK_OK, "isrc");
+    CHECK(ts_add(&s, "MUSICBRAINZ_RECORDINGID", "rec-2001") == MUSICPACK_OK, "mb rec");
+    CHECK(ts_add(&s, "MUSICBRAINZ_RELEASETRACKID", "trk-2001") == MUSICPACK_OK, "mb trk");
+    CHECK(ts_add(&s, "SOURCE", "Deezer") == MUSICPACK_OK, "source");
+    CHECK(ts_add(&s, "SOURCEID", "3810015612") == MUSICPACK_OK, "sourceid");
+
+    CHECK(musicpack_tag_map_track(&s, &t) == MUSICPACK_OK, "map track");
+    CHECK(t.title != 0 && strcmp(t.title, "Big in Japan") == 0, "title");
+    CHECK(t.number == 3, "track number 3");
+    CHECK(t.artist_count == 2, "two artists");
+    CHECK(t.artist_count == 2 && strcmp(t.artists[0].name, "Alphaville") == 0
+          && strcmp(t.artists[0].role, "main") == 0, "main artist");
+    CHECK(t.artist_count == 2 && strcmp(t.artists[1].name, "Bernhard Lloyd") == 0
+          && strcmp(t.artists[1].role, "composer") == 0, "composer role");
+    CHECK(t.isrc != 0 && strcmp(t.isrc, "GBK3W2503556") == 0, "isrc");
+    CHECK(t.musicbrainz_recording_id != 0 &&
+          strcmp(t.musicbrainz_recording_id, "rec-2001") == 0, "recording id");
+    CHECK(t.musicbrainz_track_id != 0 &&
+          strcmp(t.musicbrainz_track_id, "trk-2001") == 0, "track id");
+    CHECK(t.source_store != 0 && strcmp(t.source_store, "Deezer") == 0, "source store");
+    CHECK(t.source_track_id != 0 && strcmp(t.source_track_id, "3810015612") == 0,
+          "source track id");
+    free(t.title);
+    free(t.isrc);
+    free(t.musicbrainz_recording_id);
+    free(t.musicbrainz_track_id);
+    free(t.source_store);
+    free(t.source_track_id);
+    for (size_t i = 0; i < t.artist_count; i++) {
+        free(t.artists[i].name);
+        free(t.artists[i].role);
+    }
+    free(t.artists);
+    musicpack_tag_set_free(&s);
+}
+
+static void
+test_map_track_legacy_and_ape(void)
+{
+    musicpack_tag_set s;
+    musicpack_track t;
+
+    /* legacy MUSICBRAINZ_TRACKID -> recording id fallback */
+    memset(&t, 0, sizeof t);
+    CHECK(musicpack_tag_set_init(&s, "test") == MUSICPACK_OK, "init");
+    CHECK(ts_add(&s, "MUSICBRAINZ_TRACKID", "legacy-rec") == MUSICPACK_OK, "legacy");
+    CHECK(musicpack_tag_map_track(&s, &t) == MUSICPACK_OK, "map");
+    CHECK(t.musicbrainz_recording_id != 0 &&
+          strcmp(t.musicbrainz_recording_id, "legacy-rec") == 0,
+          "legacy trackid -> recording id");
+    musicpack_tag_set_free(&s);
+    free(t.musicbrainz_recording_id);
+
+    /* APE title-cased keys */
+    memset(&t, 0, sizeof t);
+    CHECK(musicpack_tag_set_init(&s, "test") == MUSICPACK_OK, "init");
+    CHECK(ts_add(&s, "Title", "The Van") == MUSICPACK_OK, "title");
+    CHECK(ts_add(&s, "Track", "5/12") == MUSICPACK_OK, "track");
+    CHECK(ts_add(&s, "Artist", "Bleachers") == MUSICPACK_OK, "artist");
+    CHECK(ts_add(&s, "ISRC", "GBK3W2503556") == MUSICPACK_OK, "isrc");
+    CHECK(ts_add(&s, "MusicBrainz Recording Id", "rec-2001") == MUSICPACK_OK, "rec");
+    CHECK(ts_add(&s, "MusicBrainz Release Track Id", "trk-2001") == MUSICPACK_OK, "trk");
+    CHECK(musicpack_tag_map_track(&s, &t) == MUSICPACK_OK, "map ape");
+    CHECK(t.number == 5, "ape track number 5");
+    CHECK(t.title != 0 && strcmp(t.title, "The Van") == 0, "ape title");
+    CHECK(t.musicbrainz_recording_id != 0 &&
+          strcmp(t.musicbrainz_recording_id, "rec-2001") == 0, "ape recording id");
+    CHECK(t.musicbrainz_track_id != 0 &&
+          strcmp(t.musicbrainz_track_id, "trk-2001") == 0, "ape track id");
+    musicpack_tag_set_free(&s);
+    free(t.title);
+    free(t.isrc);
+    free(t.musicbrainz_recording_id);
+    free(t.musicbrainz_track_id);
+    free(t.artists);
+}
+
+static void
+test_map_source(void)
+{
+    musicpack_tag_set s;
+    musicpack_manifest m;
+
+    memset(&m, 0, sizeof m);
+    CHECK(musicpack_tag_set_init(&s, "test") == MUSICPACK_OK, "init");
+    CHECK(ts_add(&s, "SOURCE", "cd-rip") == MUSICPACK_OK, "source");
+    CHECK(musicpack_tag_map_album(&s, &m) == MUSICPACK_OK, "map");
+    CHECK(m.source_type != 0 && strcmp(m.source_type, "cd-rip") == 0, "cd-rip type");
+    CHECK(m.source_store == 0, "no store for cd-rip");
+    musicpack_manifest_clear(&m);
+    musicpack_tag_set_free(&s);
+
+    memset(&m, 0, sizeof m);
+    CHECK(musicpack_tag_set_init(&s, "test") == MUSICPACK_OK, "init");
+    CHECK(ts_add(&s, "SOURCE", "CD Rip") == MUSICPACK_OK, "source");
+    CHECK(musicpack_tag_map_album(&s, &m) == MUSICPACK_OK, "map");
+    CHECK(m.source_type != 0 && strcmp(m.source_type, "cd-rip") == 0, "cd rip type");
+    musicpack_manifest_clear(&m);
+    musicpack_tag_set_free(&s);
+}
+
+static void
+test_projection(void)
+{
+    musicpack_manifest m;
+    musicpack_track t;
+    musicpack_tag_set s;
+    musicpack_manifest m2;
+    musicpack_track t2;
+    const char *v;
+
+    memset(&m, 0, sizeof m);
+    memset(&t, 0, sizeof t);
+    m.album_title = strdup("Discovery");
+    m.album_artists = (musicpack_artist *) calloc(1, sizeof *m.album_artists);
+    m.album_artists[0].name = strdup("Daft Punk");
+    m.album_artists[0].role = strdup("main");
+    m.album_artist_count = 1;
+    m.release_type = strdup("album");
+    m.original_release_date = strdup("2001-03-12");
+    m.genres = (char **) calloc(1, sizeof *m.genres);
+    m.genres[0] = strdup("Electronic");
+    m.genre_count = 1;
+    m.release.present = 1;
+    m.release.release_date = strdup("2016-09-23");
+    m.release.country = strdup("XE");
+    m.release.label = strdup("Virgin");
+    m.release.catalogue_number = strdup("8496062");
+    m.barcode = strdup("724384960620");
+    m.musicbrainz_release_group_id = strdup("rg-2001");
+    m.musicbrainz_release_id = strdup("rel-2001");
+    m.source_store = strdup("Deezer");
+    m.source_type = strdup("digital-download");
+    m.source_id = strdup("album-source-id");
+
+    t.number = 3;
+    t.title = strdup("Big in Japan");
+    t.artists = (musicpack_artist *) calloc(1, sizeof *t.artists);
+    t.artists[0].name = strdup("Alphaville");
+    t.artists[0].role = strdup("main");
+    t.artist_count = 1;
+    t.isrc = strdup("GBK3W2503556");
+    t.musicbrainz_recording_id = strdup("rec-2001");
+    t.musicbrainz_track_id = strdup("trk-2001");
+    t.source_store = strdup("Deezer");
+    t.source_track_id = strdup("3810015612");
+
+    CHECK(musicpack_manifest_to_ape_tags(&m, &t, 1, 2, 12, &s) == MUSICPACK_OK,
+          "project to ape");
+    v = musicpack_tag_set_get(&s, "Album") ? musicpack_tag_set_get(&s, "Album")->value : 0;
+    CHECK(v != 0 && strcmp(v, "Discovery") == 0, "project album");
+    v = musicpack_tag_set_get(&s, "Track") ? musicpack_tag_set_get(&s, "Track")->value : 0;
+    CHECK(v != 0 && strcmp(v, "3/12") == 0, "project track n/total");
+    v = musicpack_tag_set_get(&s, "Disc") ? musicpack_tag_set_get(&s, "Disc")->value : 0;
+    CHECK(v != 0 && strcmp(v, "1/2") == 0, "project disc n/total");
+    v = musicpack_tag_set_get(&s, "MusicBrainz Recording Id")
+            ? musicpack_tag_set_get(&s, "MusicBrainz Recording Id")->value : 0;
+    CHECK(v != 0 && strcmp(v, "rec-2001") == 0, "project recording id");
+    v = musicpack_tag_set_get(&s, "MusicBrainz Album Type")
+            ? musicpack_tag_set_get(&s, "MusicBrainz Album Type")->value : 0;
+    CHECK(v != 0 && strcmp(v, "album") == 0, "project release type");
+    v = musicpack_tag_set_get(&s, "SourceId")
+            ? musicpack_tag_set_get(&s, "SourceId")->value : 0;
+    CHECK(v != 0 && strcmp(v, "3810015612") == 0, "project track source id");
+
+    /* map the projection back and compare */
+    memset(&m2, 0, sizeof m2);
+    memset(&t2, 0, sizeof t2);
+    CHECK(musicpack_tag_map_album(&s, &m2) == MUSICPACK_OK, "map back album");
+    CHECK(musicpack_tag_map_track(&s, &t2) == MUSICPACK_OK, "map back track");
+    CHECK(m2.album_title != 0 && strcmp(m2.album_title, "Discovery") == 0,
+          "round-trip album");
+    CHECK(m2.album_artist_count == 1 && strcmp(m2.album_artists[0].name, "Daft Punk") == 0,
+          "round-trip album artist");
+    CHECK(m2.release_type != 0 && strcmp(m2.release_type, "album") == 0,
+          "round-trip release type");
+    CHECK(m2.original_release_date != 0 &&
+          strcmp(m2.original_release_date, "2001-03-12") == 0, "round-trip orig date");
+    CHECK(m2.release.release_date != 0 && strcmp(m2.release.release_date, "2016-09-23") == 0,
+          "round-trip release date");
+    CHECK(m2.release.label != 0 && strcmp(m2.release.label, "Virgin") == 0,
+          "round-trip label");
+    CHECK(m2.release.catalogue_number != 0 &&
+          strcmp(m2.release.catalogue_number, "8496062") == 0, "round-trip catalogue");
+    CHECK(m2.barcode != 0 && strcmp(m2.barcode, "724384960620") == 0,
+          "round-trip barcode");
+    CHECK(m2.musicbrainz_release_group_id != 0 &&
+          strcmp(m2.musicbrainz_release_group_id, "rg-2001") == 0, "round-trip rgid");
+    CHECK(m2.musicbrainz_release_id != 0 &&
+          strcmp(m2.musicbrainz_release_id, "rel-2001") == 0, "round-trip relid");
+    CHECK(m2.source_store != 0 && strcmp(m2.source_store, "Deezer") == 0,
+          "round-trip source store");
+    CHECK(t2.title != 0 && strcmp(t2.title, "Big in Japan") == 0, "round-trip title");
+    CHECK(t2.number == 3, "round-trip track number");
+    CHECK(t2.isrc != 0 && strcmp(t2.isrc, "GBK3W2503556") == 0, "round-trip isrc");
+    CHECK(t2.musicbrainz_recording_id != 0 &&
+          strcmp(t2.musicbrainz_recording_id, "rec-2001") == 0, "round-trip recording");
+    CHECK(t2.musicbrainz_track_id != 0 &&
+          strcmp(t2.musicbrainz_track_id, "trk-2001") == 0, "round-trip track id");
+
+    musicpack_manifest_clear(&m2);
+    free(t2.title);
+    free(t2.isrc);
+    free(t2.musicbrainz_recording_id);
+    free(t2.musicbrainz_track_id);
+    free(t2.source_store);
+    free(t2.source_track_id);
+    for (size_t i = 0; i < t2.artist_count; i++) {
+        free(t2.artists[i].name);
+        free(t2.artists[i].role);
+    }
+    free(t2.artists);
+    musicpack_tag_set_free(&s);
+    musicpack_manifest_clear(&m);
+    free(t.title);
+    free(t.isrc);
+    free(t.musicbrainz_recording_id);
+    free(t.musicbrainz_track_id);
+    free(t.source_store);
+    free(t.source_track_id);
+    for (size_t i = 0; i < t.artist_count; i++) {
+        free(t.artists[i].name);
+        free(t.artists[i].role);
+    }
+    free(t.artists);
+}
+
+/* ------------------------------------------------------------------ */
 /* main                                                                */
 /* ------------------------------------------------------------------ */
 
@@ -1274,6 +1681,14 @@ int main(int argc, char **argv)
         test_flac_negatives(metadir);
         test_ape_read_fixture(metadir);
         test_ape_write();
+        test_meta_helpers();
+        test_map_album_vorbis();
+        test_map_album_ape();
+        test_map_album_first_wins();
+        test_map_track();
+        test_map_track_legacy_and_ape();
+        test_map_source();
+        test_projection();
     }
 
     if (failures) {

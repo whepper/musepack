@@ -48,6 +48,7 @@
 
 #include <musicpack/error.h>
 #include <musicpack/export.h>
+#include <musicpack/manifest.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -168,6 +169,40 @@ MUSICPACK_API musicpack_status musicpack_ape_write(const char *path,
 MUSICPACK_API musicpack_status musicpack_flac_read_metadata(const char *path,
                                                             musicpack_tag_set *comments,
                                                             musicpack_pictures *pictures);
+
+/* ---- tag -> manifest mapping (Phase 3A: mapping core) ---------------- */
+
+/// Maps album/release/identifier/source fields from a tag set (Vorbis or
+/// APEv2) into a manifest. First-wins: existing values are never
+/// overwritten, so the first file's album metadata wins. \p m should be
+/// zeroed; any strings stored become owned by the manifest.
+MUSICPACK_API musicpack_status musicpack_tag_map_album(const musicpack_tag_set *tags,
+                                                       musicpack_manifest *m);
+
+/// Maps per-track fields (title, number, artists with roles, ISRC,
+/// MusicBrainz IDs, source store/id) from a tag set into a track.
+/// First-wins per field.
+MUSICPACK_API musicpack_status musicpack_tag_map_track(const musicpack_tag_set *tags,
+                                                       musicpack_track *t);
+
+/// Projects manifest + track metadata into an APEv2-ready tag set (the
+/// portable audio-file metadata written to a transcoded .mpc). \p out is
+/// initialized fresh. \p disc/\p disc_total/\p track_total are optional
+/// (0 omits the total).
+MUSICPACK_API musicpack_status musicpack_manifest_to_ape_tags(const musicpack_manifest *m,
+                                                              const musicpack_track *t,
+                                                              int disc, int disc_total,
+                                                              int track_total,
+                                                              musicpack_tag_set *out);
+
+/// Maps a MusicBrainz release-type vocabulary value (e.g. "album", "live",
+/// "remix") to the .mpack v1 releaseType enum ("other" for anything
+/// unrecognized). Returns NULL for NULL/empty input.
+MUSICPACK_API const char *musicpack_meta_release_type_from_tag(const char *value);
+
+/// Parses "3", "3/12" or "03" into \p out (values >= 1). Returns 1 on
+/// success, 0 otherwise.
+MUSICPACK_API int musicpack_meta_parse_track_number(const char *value, int *out);
 
 #ifdef __cplusplus
 }
