@@ -1,0 +1,189 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://musicpack.dev/specs/musicpack-v1.schema.json",
+  "title": "MusicPack .mpack v1 manifest",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["format", "version", "album", "media"],
+  "properties": {
+    "format": { "const": "musicpack" },
+    "version": { "const": 1 },
+    "album": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["title", "artists"],
+      "properties": {
+        "title": { "type": "string", "minLength": 1 },
+        "artists": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": true,
+            "required": ["name"],
+            "properties": {
+              "name": { "type": "string", "minLength": 1 },
+              "role": { "type": "string" }
+            }
+          }
+        },
+        "releaseDate": { "type": "string" },
+        "genres": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "identifiers": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "musicbrainzReleaseId": { "type": "string" },
+        "barcode": { "type": "string" }
+      }
+    },
+    "identity": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "source": { "enum": ["musicbrainz", "store", "local"] },
+        "confidence": { "enum": ["exact", "confirmed", "probable", "none"] }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "type": { "type": "string" },
+        "store": { "type": "string" },
+        "sourceId": { "type": "string" }
+      }
+    },
+    "media": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["disc", "tracks"],
+        "properties": {
+          "disc": { "type": "integer", "minimum": 1 },
+          "title": { "type": "string" },
+          "tracks": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": true,
+              "required": ["track", "title", "audio"],
+              "properties": {
+                "track": { "type": "integer", "minimum": 1 },
+                "title": { "type": "string", "minLength": 1 },
+                "artists": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true,
+                    "required": ["name"],
+                    "properties": {
+                      "name": { "type": "string", "minLength": 1 },
+                      "role": { "type": "string" }
+                    }
+                  }
+                },
+                "identifiers": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "properties": { "isrc": { "type": "string" } }
+                },
+                "source": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "properties": {
+                    "store": { "type": "string" },
+                    "trackId": { "type": "string" }
+                  }
+                },
+                "sourceAudio": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "properties": {
+                    "codec": { "type": "string" },
+                    "md5": { "type": "string" }
+                  }
+                },
+                "duration": { "type": "number", "exclusiveMinimum": 0 },
+                "loudness": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "required": ["trackLUFS", "truePeakDbTP"],
+                  "properties": {
+                    "trackLUFS": { "type": "number" },
+                    "truePeakDbTP": { "type": "number" }
+                  }
+                },
+                "audio": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "required": ["path", "sha256"],
+                  "properties": {
+                    "path": { "type": "string", "minLength": 1 },
+                    "sha256": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "codec": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "artwork": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["role", "path"],
+        "properties": {
+          "role": { "type": "string", "minLength": 1 },
+          "path": { "type": "string", "minLength": 1 },
+          "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+        }
+      }
+    },
+    "booklet": { "$ref": "#/$defs/assetArray" },
+    "lyrics": { "$ref": "#/$defs/assetArray" },
+    "extras": { "$ref": "#/$defs/assetArray" },
+    "loudness": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "albumLUFS": { "type": "number" },
+        "albumTruePeakDbTP": { "type": "number" }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "tool": { "type": "string" },
+        "toolVersion": { "type": "string" }
+      }
+    }
+  },
+  "$defs": {
+    "assetArray": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["path"],
+        "properties": {
+          "path": { "type": "string", "minLength": 1 },
+          "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+        }
+      }
+    }
+  }
+}

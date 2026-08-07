@@ -559,7 +559,7 @@ musicpack_manifest_parse(const char *json, musicpack_status *status)
 }
 
 void
-musicpack_manifest_free(musicpack_manifest *m)
+musicpack_manifest_clear(musicpack_manifest *m)
 {
     size_t i;
 
@@ -624,6 +624,14 @@ musicpack_manifest_free(musicpack_manifest *m)
 
     free(m->provenance_tool);
     free(m->provenance_tool_version);
+}
+
+void
+musicpack_manifest_free(musicpack_manifest *m)
+{
+    if (m == 0)
+        return;
+    musicpack_manifest_clear(m);
     free(m);
 }
 

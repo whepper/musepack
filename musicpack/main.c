@@ -715,7 +715,11 @@ cmd_import(int argc, char **argv)
     size_t file_count = 0, file_cap = 0;
     import_track *tracks = 0;
     size_t track_count = 0, track_cap = 0;
-    char *artwork_src = 0, *lyrics_src = 0, *booklet_src = 0;
+    char *artwork_src = 0, *booklet_src = 0;
+    char **lyrics_srcs = 0;
+    size_t lyrics_count = 0, lyrics_cap = 0;
+    char **extras_srcs = 0;
+    size_t extras_count = 0, extras_cap = 0;
     musicpack_manifest m;
     char audio_dir[MUSICPACK_PATH_MAX + 2];
     char art_dir[MUSICPACK_PATH_MAX + 2], lyr_dir[MUSICPACK_PATH_MAX + 2];
@@ -770,9 +774,20 @@ cmd_import(int argc, char **argv)
             continue;
         }
         dot = strrchr(rel, '.');
-        if (dot != 0 && (strcmp(dot, ".lrc") == 0 || strcmp(dot, ".txt") == 0)) {
-            free(lyrics_src);
-            lyrics_src = strdup(files[i]);
+        if (dot != 0 && strcmp(dot, ".lrc") == 0) {
+            if (lyrics_count >= lyrics_cap) {
+                lyrics_cap = lyrics_cap == 0 ? 8 : lyrics_cap * 2;
+                lyrics_srcs = (char **) realloc(lyrics_srcs, lyrics_cap * sizeof *lyrics_srcs);
+            }
+            lyrics_srcs[lyrics_count++] = strdup(files[i]);
+            continue;
+        }
+        if (dot != 0 && (strcmp(dot, ".txt") == 0 || strcmp(dot, ".md") == 0)) {
+            if (extras_count >= extras_cap) {
+                extras_cap = extras_cap == 0 ? 8 : extras_cap * 2;
+                extras_srcs = (char **) realloc(extras_srcs, extras_cap * sizeof *extras_srcs);
+            }
+            extras_srcs[extras_count++] = strdup(files[i]);
             continue;
         }
         if (is_audio_ext(rel)) {
@@ -937,21 +952,70 @@ cmd_import(int argc, char **argv)
                 m.artwork[0].asset.sha256 = strdup(hex);
         }
     }
-    if (!bad && lyrics_src != 0) {
+    if (!bad && booklet_src != 0) {
         char target[MUSICPACK_PATH_MAX + 2];
-        const char *base = strrchr(lyrics_src, '/');
-        const char *name = base != 0 ? base + 1 : lyrics_src;
-        snprintf(target, sizeof target, "%s/%s", lyr_dir, name);
-        if (snprintf(srcpath, sizeof srcpath, "%s/%s", src, lyrics_src) >= (int) sizeof srcpath) bad = 1;
-        if (!bad && copy_file(srcpath, target) != 0) {
-            fprintf(stderr, "cannot copy lyrics\n");
+        snprintf(target, sizeof target, "%s/booklet", out_dir);
+        if (mkdir_p(target) != 0)
             bad = 1;
-        } else {
-            m.lyrics = (musicpack_asset *) calloc(1, sizeof *m.lyrics);
-            m.lyrics_count = 1;
-            m.lyrics[0].path = strdup(target + strlen(out_dir) + 1);
+        else {
+            snprintf(target, sizeof target, "%s/booklet/booklet.pdf", out_dir);
+            if (snprintf(srcpath, sizeof srcpath, "%s/%s", src, booklet_src) >= (int) sizeof srcpath) bad = 1;
+            if (!bad && copy_file(srcpath, target) != 0) {
+                fprintf(stderr, "cannot copy booklet\n");
+                bad = 1;
+            } else {
+                m.booklet = (musicpack_asset *) calloc(1, sizeof *m.booklet);
+                m.booklet_count = 1;
+                m.booklet[0].path = strdup(target + strlen(out_dir) + 1);
+                if (musicpack_sha256_file(target, hex, sizeof hex) == MUSICPACK_OK)
+                    m.booklet[0].sha256 = strdup(hex);
+            }
+        }
+    }
+    if (!bad && lyrics_count > 0) {
+        size_t k;
+        m.lyrics = (musicpack_asset *) calloc(lyrics_count, sizeof *m.lyrics);
+        m.lyrics_count = lyrics_count;
+        for (k = 0; k < lyrics_count && !bad; k++) {
+            char target[MUSICPACK_PATH_MAX + 2];
+            const char *base = strrchr(lyrics_srcs[k], '/');
+            const char *name = base != 0 ? base + 1 : lyrics_srcs[k];
+            snprintf(target, sizeof target, "%s/%s", lyr_dir, name);
+            if (snprintf(srcpath, sizeof srcpath, "%s/%s", src, lyrics_srcs[k]) >= (int) sizeof srcpath) { bad = 1; break; }
+            if (copy_file(srcpath, target) != 0) {
+                fprintf(stderr, "cannot copy lyrics '%s'\n", name);
+                bad = 1;
+                break;
+            }
+            m.lyrics[k].path = strdup(target + strlen(out_dir) + 1);
             if (musicpack_sha256_file(target, hex, sizeof hex) == MUSICPACK_OK)
-                m.lyrics[0].sha256 = strdup(hex);
+                m.lyrics[k].sha256 = strdup(hex);
+        }
+    }
+    if (!bad && extras_count > 0) {
+        size_t k;
+        char ex_dir[MUSICPACK_PATH_MAX + 2];
+        snprintf(ex_dir, sizeof ex_dir, "%s/extras", out_dir);
+        if (mkdir_p(ex_dir) != 0)
+            bad = 1;
+        else {
+            m.extras = (musicpack_asset *) calloc(extras_count, sizeof *m.extras);
+            m.extras_count = extras_count;
+            for (k = 0; k < extras_count && !bad; k++) {
+                char target[MUSICPACK_PATH_MAX + 2];
+                const char *base = strrchr(extras_srcs[k], '/');
+                const char *name = base != 0 ? base + 1 : extras_srcs[k];
+                snprintf(target, sizeof target, "%s/%s", ex_dir, name);
+                if (snprintf(srcpath, sizeof srcpath, "%s/%s", src, extras_srcs[k]) >= (int) sizeof srcpath) { bad = 1; break; }
+                if (copy_file(srcpath, target) != 0) {
+                    fprintf(stderr, "cannot copy extra '%s'\n", name);
+                    bad = 1;
+                    break;
+                }
+                m.extras[k].path = strdup(target + strlen(out_dir) + 1);
+                if (musicpack_sha256_file(target, hex, sizeof hex) == MUSICPACK_OK)
+                    m.extras[k].sha256 = strdup(hex);
+            }
         }
     }
 
@@ -969,7 +1033,7 @@ cmd_import(int argc, char **argv)
     }
 
     /* free model */
-    musicpack_manifest_free(&m);
+    musicpack_manifest_clear(&m);
     for (i = 0; i < track_count; i++) {
         free(tracks[i].src_rel);
         free(tracks[i].title);
@@ -977,8 +1041,13 @@ cmd_import(int argc, char **argv)
     }
     free(tracks);
     free(artwork_src);
-    free(lyrics_src);
     free(booklet_src);
+    for (i = 0; i < lyrics_count; i++)
+        free(lyrics_srcs[i]);
+    free(lyrics_srcs);
+    for (i = 0; i < extras_count; i++)
+        free(extras_srcs[i]);
+    free(extras_srcs);
 
     if (bad) {
         fprintf(stderr, "import failed\n");

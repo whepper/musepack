@@ -150,6 +150,10 @@ MUSICPACK_API musicpack_manifest *musicpack_manifest_parse(const char *json,
 /// Releases a manifest and all owned strings.
 MUSICPACK_API void musicpack_manifest_free(musicpack_manifest *m);
 
+/// Releases all owned strings inside a manifest without freeing the struct
+/// itself. For manifests created on the caller's stack.
+MUSICPACK_API void musicpack_manifest_clear(musicpack_manifest *m);
+
 /// Serializes a manifest to JSON text in canonical key order.
 ///
 /// \param m        manifest to serialize

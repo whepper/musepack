@@ -42,6 +42,8 @@ tests/fixtures/_src.wav
 *.wav
 !tests/fixtures/*.mpc
 !tests/fixtures/*.wav
+!tests/reference/**/*.mpc
+!tests/reference/**/*.wav
 
 # Editor / OS
 .DS_Store
