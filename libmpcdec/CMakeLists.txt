@@ -21,6 +21,12 @@ target_link_libraries(mpcdec PUBLIC mpc_headers)
 find_package(Threads REQUIRED)
 target_link_libraries(mpcdec PUBLIC Threads::Threads)
 
+# libm provides pow/log10 etc. On Linux this must be an explicit dependency
+# of the shared library (macOS provides them in libSystem).
+if(UNIX AND NOT APPLE)
+  target_link_libraries(mpcdec PUBLIC m)
+endif()
+
 if(MPC_BUILD_SHARED)
   set_target_properties(mpcdec PROPERTIES
       VERSION ${PROJECT_VERSION}
