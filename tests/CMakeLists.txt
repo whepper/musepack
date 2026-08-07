@@ -39,10 +39,24 @@ if(UNIX)
                      ${CMAKE_CURRENT_SOURCE_DIR}/run_fuzz.sh
                      $<TARGET_FILE:mpcdec_cmd>
                      ${_fixture})
+endif()
 
-    # Bit-identity with the pristine reference encoder over the synthetic
-    # corpus (tests/reference_manifest.txt, generated from upstream r475).
+# ---- Bit-identity with the pristine reference encoder ----------------------
+# Encodes the deterministic corpus and compares SHA-256 against either a
+# reference encoder passed via REF_MPCENC (live comparison, used by CI so the
+# check is toolchain-agnostic) or the committed -O0 manifest
+# (tests/reference_manifest.txt). Runs on all platforms; Windows invokes the
+# script through Git Bash.
+if(UNIX)
     add_test(NAME compat
              COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/run_compat.sh
                      $<TARGET_FILE:mpcenc>)
+elseif(WIN32)
+    find_program(MPC_GIT_BASH bash
+                 HINTS "C:/Program Files/Git/bin" "C:/Program Files/Git/usr/bin")
+    if(MPC_GIT_BASH)
+        add_test(NAME compat
+                 COMMAND ${MPC_GIT_BASH} ${CMAKE_CURRENT_SOURCE_DIR}/run_compat.sh
+                         $<TARGET_FILE:mpcenc>)
+    endif()
 endif()

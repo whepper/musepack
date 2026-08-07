@@ -52,8 +52,10 @@ cmake --install build
 See `tests/README.md`. With `-DMPC_BUILD_TESTS=ON`, `ctest` runs five suites:
 unit tests (crc32, bitstream, tables), a fixture regression that pins decode
 output for bit-exactness, end-to-end integration, decoder robustness on
-malformed input, and a compatibility manifest that pins the encoder to
-bit-identical output with the pristine reference encoder:
+malformed input, and a compatibility check that pins the encoder to
+bit-identical output with the pristine reference encoder (compared live
+against a reference build on CI, with a committed manifest as the local
+fallback):
 
 ```sh
 cmake -S . -B build -DMPC_BUILD_TESTS=ON

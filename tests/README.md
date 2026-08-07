@@ -20,8 +20,9 @@ Five suites are run:
 | `compat`        | encoder output byte-identical to the reference encoder     |
 
 The `unit` suite is a C program (`unit_tests.c`) and runs on all platforms.
-`fixtures`, `integration`, `fuzz`, and `compat` are bash/python3 scripts and
-are registered only on UNIX.
+`fixtures`, `integration`, and `fuzz` are bash/python3 scripts and are
+registered only on UNIX. `compat` is a bash/python3 script that runs on all
+platforms (Windows invokes it through Git Bash).
 
 ## Fixture regression harness
 
@@ -75,16 +76,28 @@ The decoder is expected to reject malformed input gracefully, never crash
 
 ## Reference-encoder compatibility
 
-`run_compat.sh <mpcenc>` regenerates the deterministic corpus from
-`generate_corpus.py`, encodes every WAV at the quality levels pinned in
-`reference_manifest.txt`, and verifies the SHA-256 of each output against
-the manifest. The manifest was produced by the pristine upstream encoder
-(r475 / git `05d97a5`), so a passing `compat` test proves the built encoder
-is byte-identical to the reference.
+`run_compat.sh <mpcenc> [ref_mpcenc]` regenerates the deterministic corpus
+from `generate_corpus.py`, encodes every WAV at quality levels 3, 5 and 7,
+and verifies the SHA-256 of each output against the pristine upstream
+encoder (r475 / git `05d97a5`).
 
-Note: encoder byte-identity is optimization-dependent (verified at both
-`-O0` and `-O3` against the reference). The manifest is generated from a
-`-O0` reference build, matching the default CMake build type used by the CI
-UNIX test build. Regenerate the manifest from a reference build at the same
-optimization as the encoder under test if you change the build type.
+Two comparison modes:
+
+* **Live (CI):** pass a reference `mpcenc` as the second argument or set the
+  `REF_MPCENC` environment variable. The expected hashes are then produced by
+  encoding the corpus with that reference binary on the spot. This is
+  toolchain-agnostic — the reference and the encoder under test are built with
+  the same compiler and flags on the CI runner — and is how the test runs on
+  all three CI platforms (Linux, macOS, Windows).
+* **Manifest (local fallback):** with no reference binary, compare against
+  the committed `tests/reference_manifest.txt`. That manifest was produced by
+  a `-O0` reference build and is only valid at matching optimization (the
+  default CMake build type on the CI UNIX test build).
+
+Note: encoder byte-identity is optimization-dependent (verified at both `-O0`
+and `-O3` against the reference). With the live mode this is not an issue
+because both binaries use the same settings; the manifest mode requires the
+encoder under test to be built at the same optimization as the manifest.
+Regenerate the manifest from a reference build at the same optimization as
+the encoder under test if you change the build type.
 
