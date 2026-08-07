@@ -15,6 +15,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # needed to build the reference encoder at 05d97a5
 
       - name: Configure
         run: >
@@ -33,4 +35,47 @@ jobs:
 
       - name: Test (integration + fuzz + fixtures)
         if: matrix.os != 'windows-latest'
-        run: ctest --test-dir build -C Release -E "^unit$" --output-on-failure
+        run: ctest --test-dir build -C Release -E "^unit$|^compat$" --output-on-failure
+
+      # Build the pristine reference encoder (05d97a5) and verify the built
+      # encoder is byte-identical to it. Runs on all platforms: the live
+      # comparison is toolchain-agnostic (the committed -O0 manifest is only a
+      # local fallback). Unix: patch the reference's hardcoded -O3 CFLAGS to
+      # match the main build's default (-O0). Windows: both use --config
+      # Release (/O2).
+      - name: Checkout reference encoder
+        shell: bash
+        run: git worktree add --detach "$RUNNER_TEMP/musepack-ref" 05d97a5
+
+      - name: Configure reference encoder
+        shell: bash
+        run: |
+          # The pristine build fails to configure unless libreplaygain and
+          # libcuefile are present (mpcgain/mpcchap); disable those subdirs.
+          sed -i 's/^add_subdirectory(mpcgain)/#add_subdirectory(mpcgain)/' \
+            "$RUNNER_TEMP/musepack-ref/CMakeLists.txt"
+          sed -i 's/^add_subdirectory(mpcchap)/#add_subdirectory(mpcchap)/' \
+            "$RUNNER_TEMP/musepack-ref/CMakeLists.txt"
+          # Match the main build's optimization so outputs are comparable:
+          # Unix uses the default (-O0), Windows uses --config Release (/O2).
+          # GCC 14+ treats -Wincompatible-pointer-types as an error; the
+          # reference code triggers it (ans.c, mpcenc.c), so downgrade it.
+          if [ "$RUNNER_OS" != "Windows" ]; then
+            sed -i 's/set(CMAKE_C_FLAGS "-O3 -Wall -fomit-frame-pointer -pipe")/set(CMAKE_C_FLAGS "-O0 -Wall -fomit-frame-pointer -pipe -Wno-error=incompatible-pointer-types")/' "$RUNNER_TEMP/musepack-ref/CMakeLists.txt"
+          fi
+          cmake -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+            -S "$RUNNER_TEMP/musepack-ref" -B "$RUNNER_TEMP/ref-build"
+
+      - name: Build reference encoder
+        run: cmake --build "$RUNNER_TEMP/ref-build" --config Release -j --target mpcenc
+
+      - name: Test (compat)
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            REF_MPCENC="$(cygpath -u "$RUNNER_TEMP")/ref-build/mpcenc/mpcenc.exe"
+          else
+            REF_MPCENC="$RUNNER_TEMP/ref-build/mpcenc/mpcenc"
+          fi
+          export REF_MPCENC
+          ctest --test-dir build -C Release -R "^compat$" --output-on-failure
