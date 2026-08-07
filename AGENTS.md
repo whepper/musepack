@@ -15,6 +15,18 @@ This is a **modernized** copy of upstream Musepack r475 (git `05d97a5`).
 The working rule is: **modernize the ecosystem aggressively, change the codec
 conservatively.** Any risky codec change must be proven behavior-preserving.
 
+## Stable decoder API (`libmusepack`)
+
+Since Phase 1, the canonical decoder-facing API lives in `include/musepack/`
+(`<musepack/musepack.h>`): an opaque `musepack_decoder` session
+(`musepack_decoder_open/read/seek/...`) over the `mpc_reader` input
+abstraction, implemented as a thin facade on `mpc_demux` in
+`libmpcdec/musepack_decoder.c`. New code should use this API. The historical
+`include/mpc/*.h` headers stay installed for compatibility. The decoder also
+builds to WebAssembly (`wasm/`, Emscripten) with a browser demo in `demo/`.
+Library target is `musepack` (output `libmusepack`), exported as
+`Musepack::Decoder`; `mpcdec` remains an in-tree alias.
+
 ## Building
 
 CMake 3.16+. Configure, build, test:

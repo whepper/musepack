@@ -8,21 +8,25 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-Five suites are run:
+Five native suites are run (plus `wasm_smoke` in the Emscripten build):
 
 | Test            | What it checks                                             |
 |-----------------|------------------------------------------------------------|
 | `unit`          | crc32 vectors, byte-aligned bit writer/reader round-trip,  |
 |                 | size encode/decode round-trip, Cnk table math, Huffman LUTs|
-| `fixtures`      | decode(fixture.mpc) == golden .wav (sample-exact)          |
+| `api`           | libmusepack API: lifecycle, invalid input, memory/file     |
+|                 | decoding, stream info, full decode, seeking, instances     |
+| `fixtures`      | decode(fixture.mpc) == golden .wav (tolerance-based)       |
 | `integration`   | end-to-end encode/decode/seek/cut/compare on real files    |
 | `fuzz`          | decoder survives truncated and bit-flipped inputs          |
 | `compat`        | encoder output byte-identical to the reference encoder     |
+| `wasm_smoke`    | WASM build decodes a fixture; PCM ≈ golden WAV (Emscripten)|
 
-The `unit` suite is a C program (`unit_tests.c`) and runs on all platforms.
+The `unit` and `api` suites are C programs and run on all platforms.
 `fixtures`, `integration`, and `fuzz` are bash/python3 scripts and are
 registered only on UNIX. `compat` is a bash/python3 script that runs on all
-platforms (Windows invokes it through Git Bash).
+platforms (Windows invokes it through Git Bash). `wasm_smoke` is registered
+only when building with Emscripten.
 
 ## Fixture regression harness
 
