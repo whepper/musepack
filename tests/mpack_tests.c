@@ -1252,6 +1252,12 @@ test_meta_helpers(void)
           "type unknown -> other");
     CHECK(musicpack_meta_release_type_from_tag(0) == 0, "type NULL -> NULL");
     CHECK(musicpack_meta_release_type_from_tag("") == 0, "type empty -> NULL");
+
+    CHECK(strcmp(musicpack_meta_picture_role(3), "front") == 0, "pic 3 front");
+    CHECK(strcmp(musicpack_meta_picture_role(4), "back") == 0, "pic 4 back");
+    CHECK(strcmp(musicpack_meta_picture_role(7), "booklet-page") == 0, "pic 7 booklet");
+    CHECK(strcmp(musicpack_meta_picture_role(8), "medium") == 0, "pic 8 medium");
+    CHECK(strcmp(musicpack_meta_picture_role(0), "other") == 0, "pic 0 other");
 }
 
 static void

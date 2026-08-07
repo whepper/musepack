@@ -175,6 +175,18 @@ musicpack_meta_release_type_from_tag(const char *value)
     return "other";
 }
 
+const char *
+musicpack_meta_picture_role(int type)
+{
+    switch (type) {
+    case 3: return "front";
+    case 4: return "back";
+    case 7: return "booklet-page";
+    case 8: return "medium";
+    default: return "other";
+    }
+}
+
 /* Is the SOURCE tag value a store/service name rather than a rip type? */
 static int
 source_is_store(const char *v)

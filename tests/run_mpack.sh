@@ -281,12 +281,25 @@ assert t["identifiers"]["isrc"] == "GBK3W2503556"
 assert t["identifiers"]["musicbrainzRecordingId"] == "12121212-3434-5656-7878-909090909090"
 assert t["identifiers"]["musicbrainzTrackId"] == "23232323-4545-6767-8989-abababababab"
 assert t["source"]["store"] == "Deezer" and t["source"]["trackId"] == "3810015612"
+roles = {a["role"]: a["path"] for a in m["artwork"]}
+assert roles.get("front", "").endswith(".png"), "front artwork from FLAC picture"
+assert roles.get("back", "").endswith(".jpg"), "back artwork from FLAC picture"
+assert any(p.startswith("lyrics/") for p in [l["path"] for l in m["lyrics"]]), \
+    "lyrics asset from LYRICS tag"
 print("ok")
 EOF
 then
     pass "tag-driven manifest fields (FLAC/Vorbis)"
 else
     fail "tag-driven manifest fields (FLAC/Vorbis)"
+fi
+
+# 7a. embedded artwork and lyrics are extracted, byte-preserving
+if [ -f "$TAGIMP/artwork/front.png" ] && [ -f "$TAGIMP/artwork/back.jpg" ] \
+   && [ -f "$TAGIMP/lyrics/03 - Big in Japan.txt" ]; then
+    pass "embedded artwork + lyrics extracted"
+else
+    fail "embedded artwork + lyrics extracted"
 fi
 
 # 7b. APEv2 tags on an existing .mpc are read too

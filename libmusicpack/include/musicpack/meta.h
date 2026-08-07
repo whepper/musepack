@@ -204,6 +204,10 @@ MUSICPACK_API const char *musicpack_meta_release_type_from_tag(const char *value
 /// success, 0 otherwise.
 MUSICPACK_API int musicpack_meta_parse_track_number(const char *value, int *out);
 
+/// Maps a FLAC PICTURE type to the .mpack artwork role: 3 -> "front",
+/// 4 -> "back", 7 -> "booklet-page", 8 -> "medium", anything else -> "other".
+MUSICPACK_API const char *musicpack_meta_picture_role(int type);
+
 #ifdef __cplusplus
 }
 #endif

@@ -835,7 +835,10 @@ typedef struct {
     char *title;     /* without extension or number prefix */
     char *ext;       /* original file extension incl. dot (".mpc") */
     musicpack_tag_set tags;  /* embedded metadata; empty when untagged */
+    musicpack_pictures pics; /* embedded FLAC pictures; empty when none */
     int has_tags;
+    char *lyric_path;        /* written lyrics asset (manifest-relative) */
+    char *lyric_sha;
 } import_track;
 
 static int
@@ -874,7 +877,7 @@ read_track_tags(import_track *it, const char *srcpath)
     if (dot == 0)
         return;
     if (strcmp(dot, ".flac") == 0) {
-        if (musicpack_flac_read_metadata(srcpath, &it->tags, 0) == MUSICPACK_OK)
+        if (musicpack_flac_read_metadata(srcpath, &it->tags, &it->pics) == MUSICPACK_OK)
             it->has_tags = 1;
     } else if (strcmp(dot, ".mpc") == 0) {
         if (musicpack_ape_read(srcpath, &it->tags) == MUSICPACK_OK)
@@ -903,6 +906,66 @@ sanitize_component(char *s)
     for (; *s != '\0'; s++)
         if (*s == '/' || *s == '\\' || *s == ':')
             *s = '-';
+}
+
+/* Writes raw bytes (not NUL-terminated) to a file. */
+static int
+write_bytes(const char *path, const unsigned char *data, size_t len)
+{
+    FILE *f = fopen(path, "wb");
+    if (f == 0)
+        return -1;
+    if (len > 0 && fwrite(data, 1, len, f) != len) {
+        fclose(f);
+        return -1;
+    }
+    if (fclose(f) != 0)
+        return -1;
+    return 0;
+}
+
+static const char *
+ext_for_mime(const char *mime)
+{
+    if (mime == 0)
+        return ".img";
+    if (strcmp(mime, "image/jpeg") == 0) return ".jpg";
+    if (strcmp(mime, "image/png") == 0) return ".png";
+    if (strcmp(mime, "image/gif") == 0) return ".gif";
+    if (strcmp(mime, "image/webp") == 0) return ".webp";
+    if (strcmp(mime, "image/bmp") == 0) return ".bmp";
+    return ".img";
+}
+
+static int
+artwork_role_taken(const musicpack_manifest *m, const char *role)
+{
+    size_t i;
+    for (i = 0; i < m->artwork_count; i++)
+        if (strcmp(m->artwork[i].role, role) == 0)
+            return 1;
+    return 0;
+}
+
+static int
+manifest_add_artwork(musicpack_manifest *m, const char *role,
+                     const char *relpath, const char *sha)
+{
+    musicpack_artwork *na =
+        (musicpack_artwork *) realloc(m->artwork,
+                                      (m->artwork_count + 1) * sizeof *na);
+    if (na == 0)
+        return -1;
+    m->artwork = na;
+    m->artwork[m->artwork_count].role = strdup(role);
+    m->artwork[m->artwork_count].asset.path = strdup(relpath);
+    m->artwork[m->artwork_count].asset.sha256 = sha != 0 ? strdup(sha) : 0;
+    if (m->artwork[m->artwork_count].role == 0 ||
+        m->artwork[m->artwork_count].asset.path == 0 ||
+        (sha != 0 && m->artwork[m->artwork_count].asset.sha256 == 0))
+        return -1;
+    m->artwork_count++;
+    return 0;
 }
 
 static int
@@ -1099,6 +1162,44 @@ cmd_import(int argc, char **argv)
         i = j;
     }
 
+    /* consistency: duplicate (disc, track) falls back to renumbering; album
+       title conflicts are reported as warnings */
+    i = 0;
+    while (i < track_count) {
+        int disc = tracks[i].disc;
+        size_t j = i, k, l;
+        int dup = 0;
+        while (j < track_count && tracks[j].disc == disc)
+            j++;
+        for (k = i; k < j; k++)
+            for (l = k + 1; l < j; l++)
+                if (tracks[k].number > 0 && tracks[k].number == tracks[l].number)
+                    dup = 1;
+        if (dup) {
+            int seq = 1;
+            fprintf(stderr, "warning: duplicate track numbers on disc %d; renumbering\n",
+                    disc);
+            for (k = i; k < j; k++)
+                tracks[k].number = seq++;
+        }
+        i = j;
+    }
+    if (track_count > 1 && tracks[0].has_tags) {
+        const musicpack_tag *a0 = musicpack_tag_set_get(&tracks[0].tags, "ALBUM");
+        if (a0 != 0 && !a0->is_binary) {
+            for (i = 1; i < track_count; i++) {
+                const musicpack_tag *ai;
+                if (!tracks[i].has_tags)
+                    continue;
+                ai = musicpack_tag_set_get(&tracks[i].tags, "ALBUM");
+                if (ai != 0 && !ai->is_binary && strcmp(a0->value, ai->value) != 0)
+                    fprintf(stderr,
+                            "warning: conflicting album names ('%s' vs '%s')\n",
+                            a0->value, ai->value);
+            }
+        }
+    }
+
     /* build package: explicit flags first, then embedded metadata fills the
        gaps (first-wins), then the folder name is the title fallback. */
     memset(&m, 0, sizeof m);
@@ -1220,7 +1321,88 @@ cmd_import(int argc, char **argv)
                 fprintf(stderr, "warning: could not measure loudness of '%s'\n", it->src_rel);
             }
         }
+        /* unsynchronized lyrics tag -> first-class lyrics asset */
+        if (it->has_tags) {
+            const musicpack_tag *ly = musicpack_tag_set_get(&it->tags, "LYRICS");
+            if (ly == 0 || ly->is_binary)
+                ly = musicpack_tag_set_get(&it->tags, "UNSYNCEDLYRICS");
+            if (ly != 0 && !ly->is_binary && ly->value != 0 && *ly->value != '\0') {
+                char lpath[MUSICPACK_PATH_MAX + 2];
+                char fname2[MUSICPACK_PATH_MAX + 2];
+                snprintf(fname2, sizeof fname2, "%s", t->title != 0 ? t->title : "");
+                sanitize_component(fname2);
+                snprintf(lpath, sizeof lpath, "%s/%02d - %s.txt", lyr_dir, t->number,
+                         fname2);
+                if (write_all(lpath, ly->value) == 0) {
+                    it->lyric_path = strdup(lpath + strlen(out_dir) + 1);
+                    if (musicpack_sha256_file(lpath, hex, sizeof hex) == MUSICPACK_OK)
+                        it->lyric_sha = strdup(hex);
+                }
+            }
+        }
         disc->track_count++;
+    }
+
+    /* embedded artwork: local cover files (below) win; otherwise FLAC
+       pictures and APEv2 cover art fill missing roles, first per role. */
+    if (!bad) {
+        size_t t_i;
+        char target[MUSICPACK_PATH_MAX + 2];
+        for (t_i = 0; t_i < track_count; t_i++) {
+            import_track *it = &tracks[t_i];
+            size_t k;
+            for (k = 0; k < it->pics.count; k++) {
+                const musicpack_picture *pic = &it->pics.items[k];
+                const char *role = musicpack_meta_picture_role(pic->type);
+                const char *ext;
+                char rel[MUSICPACK_PATH_MAX + 2];
+                if (artwork_role_taken(&m, role))
+                    continue;
+                ext = ext_for_mime(pic->mime);
+                snprintf(target, sizeof target, "%s/%s%s", art_dir, role, ext);
+                if (write_bytes(target, pic->data, pic->data_len) != 0) {
+                    fprintf(stderr, "cannot write artwork\n");
+                    bad = 1;
+                    break;
+                }
+                snprintf(rel, sizeof rel, "artwork/%s%s", role, ext);
+                if (musicpack_sha256_file(target, hex, sizeof hex) == MUSICPACK_OK)
+                    manifest_add_artwork(&m, role, rel, hex);
+                else
+                    manifest_add_artwork(&m, role, rel, 0);
+            }
+            if (it->has_tags) {
+                const musicpack_tag *cov =
+                    musicpack_tag_set_get(&it->tags, "Cover Art (Front)");
+                if (cov != 0 && cov->is_binary && cov->binary_len > 0 &&
+                    !artwork_role_taken(&m, "front")) {
+                    const unsigned char *nul =
+                        (const unsigned char *) memchr(cov->binary, '\0',
+                                                       cov->binary_len);
+                    const unsigned char *img = nul != 0 ? nul + 1 : cov->binary;
+                    size_t img_len = nul != 0
+                        ? cov->binary_len - (size_t) (nul - cov->binary) - 1
+                        : cov->binary_len;
+                    const char *fname = (const char *) cov->binary;
+                    const char *dot = strrchr(fname, '.');
+                    const char *ext = dot != 0 ? dot : ".img";
+                    char rel[MUSICPACK_PATH_MAX + 2];
+                    if (img_len == 0)
+                        continue;
+                    snprintf(target, sizeof target, "%s/front%s", art_dir, ext);
+                    if (write_bytes(target, img, img_len) != 0) {
+                        fprintf(stderr, "cannot write artwork\n");
+                        bad = 1;
+                        break;
+                    }
+                    snprintf(rel, sizeof rel, "artwork/front%s", ext);
+                    if (musicpack_sha256_file(target, hex, sizeof hex) == MUSICPACK_OK)
+                        manifest_add_artwork(&m, "front", rel, hex);
+                    else
+                        manifest_add_artwork(&m, "front", rel, 0);
+                }
+            }
+        }
     }
 
     if (!bad && artwork_src != 0) {
@@ -1280,6 +1462,35 @@ cmd_import(int argc, char **argv)
                 m.lyrics[k].sha256 = strdup(hex);
         }
     }
+    /* merge tag-derived lyrics assets into the manifest (ownership moves);
+       lyrics_count keeps counting only the source .lrc files so cleanup stays
+       correct */
+    if (!bad) {
+        size_t tag_count = 0, src_n = lyrics_count, mcount;
+        for (i = 0; i < track_count; i++)
+            if (tracks[i].lyric_path != 0)
+                tag_count++;
+        if (tag_count > 0) {
+            musicpack_asset *na = (musicpack_asset *) realloc(
+                m.lyrics, (src_n + tag_count) * sizeof *na);
+            if (na == 0)
+                bad = 1;
+            else {
+                m.lyrics = na;
+                mcount = src_n;
+                for (i = 0; i < track_count; i++) {
+                    if (tracks[i].lyric_path != 0) {
+                        musicpack_asset *a = &m.lyrics[mcount++];
+                        a->path = tracks[i].lyric_path;
+                        a->sha256 = tracks[i].lyric_sha;
+                        tracks[i].lyric_path = 0;
+                        tracks[i].lyric_sha = 0;
+                    }
+                }
+                m.lyrics_count = mcount;
+            }
+        }
+    }
     if (!bad && extras_count > 0) {
         size_t k;
         char ex_dir[MUSICPACK_PATH_MAX + 2];
@@ -1336,6 +1547,9 @@ cleanup:
     musicpack_meter_free(album_meter);
     for (i = 0; i < track_count; i++) {
         musicpack_tag_set_free(&tracks[i].tags);
+        musicpack_pictures_free(&tracks[i].pics);
+        free(tracks[i].lyric_path);
+        free(tracks[i].lyric_sha);
         free(tracks[i].src_rel);
         free(tracks[i].title);
         free(tracks[i].ext);
