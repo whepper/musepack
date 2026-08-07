@@ -1,6 +1,15 @@
 # Tests for the Musepack libraries and tools. Only included when
 # MPC_BUILD_TESTS is ON (see the top-level CMakeLists.txt).
 
+# The WebAssembly build is decoder-only (no encoder/tools), so the only
+# applicable test is the WASM smoke test.
+if(EMSCRIPTEN)
+  add_test(NAME wasm_smoke
+           COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/run_wasm_smoke.sh
+                   ${CMAKE_BINARY_DIR})
+  return()
+endif()
+
 # ---- C unit tests (link against the real libraries) ------------------------
 add_executable(mpc_unit_tests unit_tests.c)
 target_link_libraries(mpc_unit_tests PRIVATE mpcdec mpcenc_static)

@@ -77,3 +77,33 @@ jobs:
           [ -x "$REF_MPCENC" ] || { echo "reference mpcenc not found"; exit 1; }
           export REF_MPCENC
           ctest --test-dir build -C Release -R "^compat$" --output-on-failure
+
+  wasm-build:
+    name: wasm
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Emscripten
+        run: |
+          git clone --depth 1 https://github.com/emscripten-core/emsdk.git /opt/emsdk
+          /opt/emsdk/emsdk install latest
+          /opt/emsdk/emsdk activate latest
+
+      - name: Configure
+        shell: bash
+        run: |
+          source /opt/emsdk/emsdk_env.sh
+          emcmake cmake -S . -B build-wasm -DMPC_BUILD_TESTS=ON
+
+      - name: Build
+        shell: bash
+        run: |
+          source /opt/emsdk/emsdk_env.sh
+          cmake --build build-wasm -j
+
+      - name: Test (wasm smoke)
+        shell: bash
+        run: |
+          source /opt/emsdk/emsdk_env.sh
+          ctest --test-dir build-wasm -R "^wasm_smoke$" --output-on-failure

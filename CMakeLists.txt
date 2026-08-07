@@ -40,6 +40,22 @@ if(NOT WIN32)
 endif()
 
 # ---- subdirectories ---------------------------------------------------------
+if(EMSCRIPTEN)
+  # WebAssembly target: the decoder core and its JS wrapper only. The
+  # encoder, tools and WAV helpers are not needed (or usable) under wasm.
+  set(MPC_BUILD_SHARED OFF)
+  # Emscripten's musl libc hides fseeko/ftello without a feature macro.
+  add_compile_definitions(_POSIX_C_SOURCE=200112L)
+  add_subdirectory(include)
+  add_subdirectory(libmpcdec)
+  add_subdirectory(wasm)
+  if(MPC_BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
+  endif()
+  return()
+endif()
+
 add_subdirectory(include)
 add_subdirectory(libmpcdec)
 add_subdirectory(libmpcenc)
