@@ -61,6 +61,11 @@ endif()
 # Bound JSON nesting for untrusted input.
 target_compile_definitions(musicpack PRIVATE CJSON_NESTING_LIMIT=100)
 
+# MSVC does not define M_PI in <math.h>; vendored libebur128 uses it.
+if(MSVC)
+  target_compile_definitions(musicpack PRIVATE _USE_MATH_DEFINES)
+endif()
+
 # Vendored code is third-party: suppress warnings from it entirely.
 set_source_files_properties(
     ${CMAKE_CURRENT_SOURCE_DIR}/vendor/cjson/cJSON.c
