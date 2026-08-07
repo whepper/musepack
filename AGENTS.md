@@ -46,39 +46,50 @@ Five CTest suites, all under `tests/`:
 | `fixtures`    | decode(fixture.mpc) ≈ golden .wav (tolerance ±2 LSB)       |
 | `integration` | end-to-end encode/decode/seek/cut/compare                  |
 | `fuzz`        | decoder survives truncated/bit-flipped input               |
-| `compat`      | encoder output byte-identical to reference encoder (manifest) |
+| `compat`      | encoder output byte-identical to reference encoder         |
 
 Key details:
 
-- `fixtures`, `integration`, `fuzz`, `compat` are bash/python3 and only
-  registered on UNIX. `unit` runs on all platforms.
+- `fixtures`, `integration`, `fuzz` are bash/python3 and only registered on
+  UNIX. `compat` runs on all platforms (Windows invokes it through Git Bash).
+  `unit` runs on all platforms.
 - **Fixture comparison is tolerance-based, not byte-exact.** `mpcdec -i`
   uses `pow`/`log10` (ReplayGain), and cross-platform libm/codegen can flip
   a 16-bit sample by ±1 LSB. Use `tests/wavcmp_tol.py` for comparisons.
-- **Encoder byte-identity is optimization-dependent.** The `compat` manifest
-  (`tests/reference_manifest.txt`) is pinned to a `-O0` reference build, which
-  matches the default CMake build type of the CI UNIX test build. If you change
-  the build type, regenerate the manifest from the reference at the same
-  optimization before trusting `compat`.
+- **Encoder byte-identity is optimization- and toolchain-dependent.** The
+  `compat` test compares against a reference binary built on the same CI
+  runner with the same flags (live mode, `REF_MPCENC`), which sidesteps this.
+  The committed manifest (`tests/reference_manifest.txt`) is a `-O0` clang
+  fallback for local runs and only matches a `-O0` build of the encoder under
+  test.
 
 ## The reference encoder and `compat`
 
 `compat` regenerates a deterministic corpus (`tests/generate_corpus.py`),
-encodes with the built `mpcenc`, and compares SHA-256 against
-`tests/reference_manifest.txt` (produced from pristine r475).
+encodes with the built `mpcenc`, and compares SHA-256 at Q{3,5,7}. Two modes:
 
-To regenerate the manifest, build the reference commit in a separate worktree
-and encode over the corpus:
+- **Live (CI):** pass the reference `mpcenc` via `REF_MPCENC` (or as the
+  script's second argument). Expected hashes are produced by the reference
+  binary on the spot, so both binaries share compiler/flags. CI builds the
+  pristine reference from `05d97a5` in a worktree, patches its CMakeLists
+  (see below), and runs `compat` this way on all three platforms.
+- **Manifest (local fallback):** with no reference binary, compare against
+  `tests/reference_manifest.txt` (a `-O0` reference build).
+
+To build the reference commit in a separate worktree:
 
 ```sh
 git worktree add --detach /tmp/musepack-ref 05d97a5
 # reference CMakeLists hardcodes CMAKE_C_FLAGS ("-O3 ..."); it OVERRIDES any
 # -DCMAKE_C_FLAGS you pass. Edit that line in the worktree copy to change
 # optimization/flag settings.
+# mpcgain/mpcchap subdirs hard-fail configure without libreplaygain/libcuefile;
+# comment out those add_subdirectory() lines.
 cmake -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -S /tmp/musepack-ref -B /tmp/ref-build
 cmake --build /tmp/ref-build -j --target mpcenc
 python3 tests/generate_corpus.py /tmp/corpus
 # then SHA-256 every encode at Q{3,5,7} -> tests/reference_manifest.txt
+# (or run tests/run_compat.sh <your-mpcenc> /tmp/ref-build/mpcenc/mpcenc for live mode)
 ```
 
 Verified facts (from the compatibility audit):
