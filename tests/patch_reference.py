@@ -22,12 +22,23 @@ import sys
 
 KEEP = ("libmpcpsy", "libmpcenc", "mpcenc", "include")
 
+ASINH_SHIM = re.compile(
+    r"#ifdef _MSC_VER\n"
+    r"static double\n"
+    r"asinh \( double x \)\n"
+    r"\{\n"
+    r"    return x >= 0  \?  log \(sqrt \(x\*x\+1\) \+ x\)  :  -log \(sqrt \(x\*x\+1\) - x\);\n"
+    r"\}\n"
+    r"#endif\n",
+    re.MULTILINE,
+)
+
 
 def patch_file(path, repl, label):
     """Apply a list of (old, new) replacements to a source file.
 
-    Each replacement is skipped if `new` is already present, so re-running
-    the patch is safe (idempotent).
+    `old` may be a str (exact match) or a compiled regex. Each replacement is
+    skipped if its `new` is already present, so re-running is safe.
     """
     if not os.path.isfile(path):
         print("warning: no file at %s (skipping %s)" % (path, label), file=sys.stderr)
@@ -35,7 +46,11 @@ def patch_file(path, repl, label):
     with open(path, "r", encoding="utf-8") as f:
         txt = f.read()
     for old, new in repl:
-        if new not in txt and old in txt:
+        if new and new in txt:
+            continue
+        if hasattr(old, "sub"):
+            txt = old.sub(new, txt)
+        elif old in txt:
             txt = txt.replace(old, new)
     with open(path, "w", encoding="utf-8") as f:
         f.write(txt)
@@ -94,12 +109,7 @@ def main():
     )
     patch_file(
         os.path.join(top, "libmpcpsy", "psy_tab.c"),
-        [
-            (
-                "#ifdef _MSC_VER\nstatic double\nasinh ( double x )\n{\n    return x >= 0  ?  log (sqrt (x*x+1) + x)  :  -log (sqrt (x*x+1) - x);\n}\n#endif\n\n",
-                "",
-            ),
-        ],
+        [(ASINH_SHIM, "")],
         "remove _MSC_VER asinh shim",
     )
 

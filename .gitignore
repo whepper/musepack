@@ -35,6 +35,8 @@ configure
 *.lib
 
 # Test output
+__pycache__/
+*.pyc
 tests/fixtures/_src.wav
 *.mpc
 *.wav
