@@ -27,7 +27,13 @@ include(GNUInstallDirs)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
-set(CMAKE_C_EXTENSIONS OFF)
+# The codebase uses POSIX APIs throughout (fseeko/ftello via common/fileio.h,
+# popen in the CLI, mkdtemp in tests, ftruncate in mpcchap, M_PI in vendored
+# libebur128). Strict ISO C11 (-std=c11) hides those on glibc; compiler
+# extensions (gnu11, which also enables the feature-test macros) match what
+# macOS already exposes and what the reference encoder is built with, without
+# changing codec behavior.
+set(CMAKE_C_EXTENSIONS ON)
 
 if(NOT MSVC)
   add_compile_options(-Wall -Wextra)
