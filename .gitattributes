@@ -1,0 +1,4 @@
+# Reference fixtures are integrity-checked byte-for-byte (the .mpack
+# manifests carry sha256 per asset). Never apply line-ending normalization
+# to them, or Windows checkouts (autocrlf) would break verification.
+tests/reference/** -text
