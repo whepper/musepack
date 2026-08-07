@@ -17,6 +17,7 @@ set(MUSICPACK_SOURCES
     src/meta/flac.c
     src/meta/apev2.c
     src/meta/mapping.c
+    src/meta/mb.c
     vendor/cjson/cJSON.c
     vendor/ebur128/ebur128.c)
 

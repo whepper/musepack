@@ -1076,8 +1076,12 @@ merge_into(cJSON *dst, const cJSON *src)
             }
         } else {
             cJSON *copy = cJSON_Duplicate(child, 1);
-            if (copy != 0)
-                cJSON_ReplaceItemInObjectCaseSensitive(dst, child->string, copy);
+            if (copy != 0) {
+                if (existing != 0)
+                    cJSON_ReplaceItemInObjectCaseSensitive(dst, child->string, copy);
+                else
+                    cJSON_AddItemToObject(dst, child->string, copy);
+            }
         }
     }
 }

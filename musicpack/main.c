@@ -450,6 +450,207 @@ cmd_verify(const char *dir, int quiet)
 }
 
 /* ------------------------------------------------------------------ */
+/* command: identify                                                   */
+/* ------------------------------------------------------------------ */
+
+static int
+all_digits(const char *s)
+{
+    if (s == 0 || *s == '\0')
+        return 0;
+    for (; *s != '\0'; s++)
+        if (*s < '0' || *s > '9')
+            return 0;
+    return 1;
+}
+
+static int
+valid_uuid(const char *s)
+{
+    size_t n = strlen(s), i;
+    if (n != 36)
+        return 0;
+    for (i = 0; i < n; i++) {
+        char c = s[i];
+        if (i == 8 || i == 13 || i == 18 || i == 23) {
+            if (c != '-')
+                return 0;
+        } else if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') ||
+                     (c >= 'A' && c <= 'F')))
+            return 0;
+    }
+    return 1;
+}
+
+static char *
+read_file_bounded(const char *path, size_t max, musicpack_status *status)
+{
+    FILE *f;
+    long len;
+    char *buf;
+
+    f = fopen(path, "rb");
+    if (f == 0) {
+        *status = MUSICPACK_ERR_IO;
+        return 0;
+    }
+    if (fseek(f, 0, SEEK_END) != 0) { fclose(f); *status = MUSICPACK_ERR_IO; return 0; }
+    len = ftell(f);
+    if (len < 0 || (size_t) len > max) { fclose(f); *status = MUSICPACK_ERR_INVALID; return 0; }
+    if (fseek(f, 0, SEEK_SET) != 0) { fclose(f); *status = MUSICPACK_ERR_IO; return 0; }
+    buf = (char *) malloc((size_t) len + 1);
+    if (buf == 0) { fclose(f); *status = MUSICPACK_ERR_NOMEM; return 0; }
+    if (len > 0 && fread(buf, 1, (size_t) len, f) != (size_t) len) {
+        free(buf);
+        fclose(f);
+        *status = MUSICPACK_ERR_IO;
+        return 0;
+    }
+    fclose(f);
+    buf[len] = '\0';
+    *status = MUSICPACK_OK;
+    return buf;
+}
+
+/* Fetches a URL into a NUL-terminated buffer (bounded). The URL is built
+   only from validated UUIDs / digit barcodes, so no shell metacharacters
+   can reach the command. Returns NULL on failure. */
+static char *
+curl_fetch(const char *url, size_t max)
+{
+    char cmd[4096];
+    FILE *pipe;
+    char *buf;
+    size_t cap = 65536, len = 0;
+
+    if (snprintf(cmd, sizeof cmd,
+                 "curl -s -m 30 --max-filesize %zu -A \"musicpack/%s (https://musicpack.dev)\" \"%s\"",
+                 max, MUSICPACK_VERSION, url) >= (int) sizeof cmd)
+        return 0;
+    pipe = POPEN(cmd, POPEN_MODE);
+    if (pipe == 0)
+        return 0;
+    buf = (char *) malloc(cap);
+    if (buf == 0) {
+        PCLOSE(pipe);
+        return 0;
+    }
+    for (;;) {
+        size_t n;
+        if (len + 65536 + 1 > cap) {
+            char *nb = (char *) realloc(buf, cap * 2);
+            if (nb == 0)
+                break;
+            buf = nb;
+            cap *= 2;
+        }
+        n = fread(buf + len, 1, 65536, pipe);
+        len += n;
+        if (n < 65536)
+            break;
+    }
+    PCLOSE(pipe);
+    buf[len] = '\0';
+    return buf;
+}
+
+static void
+usage_identify(void)
+{
+    fprintf(stderr,
+        "usage: musicpack identify <package> [--mb-json FILE]\n");
+}
+
+static int
+cmd_identify(const char *dir, const char *mb_json_path)
+{
+    musicpack_package *pkg;
+    musicpack_manifest *m;
+    musicpack_status s;
+    const char *conf = "none";
+    int changed = 0;
+
+    pkg = musicpack_package_open_dir(dir, &s);
+    if (pkg == 0) {
+        fprintf(stderr, "cannot open package '%s' (error %d)\n", dir, (int) s);
+        return 1;
+    }
+    m = musicpack_package_manifest_mutable(pkg);
+
+    if (mb_json_path != 0) {
+        char *json = read_file_bounded(mb_json_path, 8u * 1024u * 1024u, &s);
+        if (json == 0) {
+            fprintf(stderr, "cannot read '%s'\n", mb_json_path);
+            musicpack_package_close(pkg);
+            return 1;
+        }
+        conf = musicpack_mb_match_confidence(json, m);
+        if (strcmp(conf, "none") != 0) {
+            musicpack_mb_apply_release(json, m);
+            changed = 1;
+        }
+        free(json);
+    } else if (m->musicbrainz_release_id != 0 &&
+               valid_uuid(m->musicbrainz_release_id)) {
+        char url[512];
+        char *json;
+        snprintf(url, sizeof url,
+                 "https://musicbrainz.org/ws/2/release/%s?inc=artist-credits+labels+recordings+media&fmt=json",
+                 m->musicbrainz_release_id);
+        json = curl_fetch(url, 1u * 1024u * 1024u);
+        if (json == 0) {
+            fprintf(stderr, "identify: network lookup failed; identity unchanged\n");
+        } else {
+            conf = musicpack_mb_match_confidence(json, m);
+            if (strcmp(conf, "none") != 0) {
+                musicpack_mb_apply_release(json, m);
+                changed = 1;
+            }
+            free(json);
+        }
+    } else if (m->barcode != 0 && all_digits(m->barcode)) {
+        char url[512];
+        char *json;
+        snprintf(url, sizeof url,
+                 "https://musicbrainz.org/ws/2/release/?query=barcode:%s&fmt=json&limit=5",
+                 m->barcode);
+        json = curl_fetch(url, 1u * 1024u * 1024u);
+        if (json == 0) {
+            fprintf(stderr, "identify: network lookup failed; identity unchanged\n");
+        } else {
+            conf = musicpack_mb_match_confidence(json, m);
+            if (strcmp(conf, "none") != 0) {
+                musicpack_mb_apply_release(json, m);
+                changed = 1;
+            }
+            free(json);
+        }
+    } else {
+        fprintf(stderr,
+                "identify: no MusicBrainz release id or barcode to match;\n"
+                "         use --mb-json with a release document to apply offline\n");
+    }
+
+    if (changed) {
+        if (m->identity_source == 0)
+            m->identity_source = strdup("musicbrainz");
+        if (m->identity_confidence == 0)
+            m->identity_confidence = strdup(conf);
+        if (musicpack_package_save_manifest(pkg) != MUSICPACK_OK) {
+            fprintf(stderr, "identify: cannot save manifest\n");
+            musicpack_package_close(pkg);
+            return 1;
+        }
+        printf("identify: %s\n", conf);
+    } else {
+        printf("identify: no match applied\n");
+    }
+
+    musicpack_package_close(pkg);
+    return 0;
+}
+
+/* ------------------------------------------------------------------ */
 /* command: create                                                     */
 /* ------------------------------------------------------------------ */
 
@@ -1583,7 +1784,7 @@ main(int argc, char **argv)
 
     fprintf(stderr, "%s", ABOUT);
     if (argc < 2) {
-        fprintf(stderr, "usage: musicpack <info|verify|create|import> ...\n");
+        fprintf(stderr, "usage: musicpack <info|verify|identify|create|import> ...\n");
         return 2;
     }
     cmd = argv[1];
@@ -1595,6 +1796,25 @@ main(int argc, char **argv)
             if (strcmp(argv[i], "-q") == 0)
                 quiet = 1;
         return argc >= 3 ? cmd_verify(argv[2], quiet) : usage_error("verify requires a package");
+    }
+    if (strcmp(cmd, "identify") == 0) {
+        const char *dir = 0, *mbjson = 0;
+        int i;
+        for (i = 2; i < argc; i++) {
+            if (strcmp(argv[i], "--mb-json") == 0 && i + 1 < argc) {
+                mbjson = argv[i + 1];
+                i++;
+            } else if (dir == 0) {
+                dir = argv[i];
+            } else {
+                return usage_error("too many arguments");
+            }
+        }
+        if (dir == 0) {
+            usage_identify();
+            return 2;
+        }
+        return cmd_identify(dir, mbjson);
     }
     if (strcmp(cmd, "create") == 0)
         return cmd_create(argc - 1, argv + 1);

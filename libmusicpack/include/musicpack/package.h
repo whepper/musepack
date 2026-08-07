@@ -84,6 +84,10 @@ MUSICPACK_API void musicpack_package_close(musicpack_package *pkg);
 /// The package's parsed manifest (owned by the package).
 MUSICPACK_API const musicpack_manifest *musicpack_package_manifest(const musicpack_package *pkg);
 
+/// The package's manifest, mutable (owned by the package). Use with
+/// musicpack_package_save_manifest() to persist changes.
+MUSICPACK_API musicpack_manifest *musicpack_package_manifest_mutable(musicpack_package *pkg);
+
 /// Verifies the package: referenced files exist, sha256 values match, and
 /// structural invariants hold (path rules were already enforced at parse).
 ///

@@ -17,6 +17,8 @@ Files produced:
 Usage: python3 tests/generate_meta_fixtures.py [out-dir]
 """
 
+import argparse
+import json
 import os
 import struct
 import sys
@@ -190,6 +192,40 @@ def main():
 
     with open(os.path.join(outdir, "vorbis-comment.bin"), "wb") as f:
         f.write(comments)
+
+    # --- MusicBrainz release fixture (matches album-vorbis.flac tags) ---
+    mb_release = {
+        "id": "11111111-2222-3333-4444-555555555555",
+        "title": "Synthetic Test Album",
+        "date": "2016-09-23",
+        "country": "XE",
+        "barcode": "198704979941",
+        "release-group": {
+            "id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+            "primary-type": "Compilation",
+            "first-release-date": "1984-06-01",
+        },
+        "artist-credit": [{"name": "Alphaville", "joinphrase": ""}],
+        "labels": [{"label": {"name": "Example Records"},
+                    "catalog-number": "ERCD 001"}],
+        "media": [{
+            "format": "Digital",
+            "position": 1,
+            "track-count": 1,
+            "tracks": [{
+                "id": "23232323-4545-6767-8989-abababababab",
+                "number": "3",
+                "title": "Big in Japan",
+                "recording": {
+                    "id": "12121212-3434-5656-7878-909090909090",
+                    "isrcs": ["GBK3W2503556"],
+                },
+            }],
+        }],
+    }
+    with open(os.path.join(outdir, "mb-release.json"), "w") as f:
+        json.dump(mb_release, f, indent=2)
+        f.write("\n")
 
     # --- APEv2 fixtures ------------------------------------------------
     ape_items = [

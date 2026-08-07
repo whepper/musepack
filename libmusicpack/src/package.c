@@ -196,6 +196,12 @@ musicpack_package_manifest(const musicpack_package *pkg)
     return pkg != 0 ? pkg->manifest : 0;
 }
 
+musicpack_manifest *
+musicpack_package_manifest_mutable(musicpack_package *pkg)
+{
+    return pkg != 0 ? pkg->manifest : 0;
+}
+
 musicpack_status
 musicpack_package_resolve_path(const musicpack_package *pkg, const char *rel,
                                char *out, size_t cap)

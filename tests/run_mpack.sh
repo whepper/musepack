@@ -339,6 +339,32 @@ else
     fail "flags override tags"
 fi
 
+# 8. identify enriches a package from a MusicBrainz release (offline --mb-json)
+if "$MUSICPACK" identify "$TAGIMP" --mb-json "$META/mb-release.json" >/dev/null 2>&1 \
+   && python3 - "$TAGIMP/manifest.json" <<'EOF'
+import json, sys
+m = json.load(open(sys.argv[1]))
+assert m.get("identity", {}).get("source") == "musicbrainz", "identity source"
+assert m["identity"]["confidence"] == "exact", "identity exact via release id"
+assert m["album"]["releaseType"] == "compilation", "releaseType enriched from MB"
+assert m["identifiers"]["musicbrainzReleaseId"] == "11111111-2222-3333-4444-555555555555"
+assert m["identifiers"]["barcode"] == "198704979941", "barcode preserved"
+print("ok")
+EOF
+then
+    pass "identify enriches from MB release (offline)"
+else
+    fail "identify enriches from MB release (offline)"
+fi
+
+# 8b. identify with no evidence leaves the package untouched
+if "$MUSICPACK" identify "$E1" >/dev/null 2>&1 \
+   && ! grep -q '"identity"' "$E1/manifest.json"; then
+    pass "identify without evidence leaves identity untouched"
+else
+    fail "identify without evidence leaves identity untouched"
+fi
+
 echo
 echo "== $PASSED passed, $FAILED failed =="
 [ "$FAILED" -eq 0 ]

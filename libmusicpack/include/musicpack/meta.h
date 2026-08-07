@@ -208,6 +208,29 @@ MUSICPACK_API int musicpack_meta_parse_track_number(const char *value, int *out)
 /// 4 -> "back", 7 -> "booklet-page", 8 -> "medium", anything else -> "other".
 MUSICPACK_API const char *musicpack_meta_picture_role(int type);
 
+/* ---- MusicBrainz response enrichment (Phase 3C) ---------------------- */
+
+/// Enriches empty manifest fields from a MusicBrainz release document (a
+/// release lookup response, or a search envelope containing "releases").
+/// First-wins per field: existing values are never overwritten. Fills album
+/// title/artists/releaseType/original date, release date/country/label/
+/// catalogue, barcode, MB release/group IDs, per-disc medium format, and
+/// per-track MB track/recording IDs + ISRC (matched by disc+track number).
+/// Identity (source/confidence) is intentionally not touched; the caller
+/// sets it from the evidence.
+MUSICPACK_API musicpack_status musicpack_mb_apply_release(const char *mb_json,
+                                                          musicpack_manifest *m);
+
+/// Returns a confidence string for how strongly \p mb_json (a MusicBrainz
+/// release document or search envelope) matches the manifest:
+///   "exact"     - the release id equals the manifest's musicbrainzReleaseId
+///   "confirmed" - barcode matches, or >=1 ISRC matches with a track-count
+///                 match
+///   "probable"  - some ISRC or title match
+///   "none"      - no usable match (or unparseable input)
+MUSICPACK_API const char *musicpack_mb_match_confidence(const char *mb_json,
+                                                        const musicpack_manifest *m);
+
 #ifdef __cplusplus
 }
 #endif

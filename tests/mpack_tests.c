@@ -1625,6 +1625,174 @@ test_projection(void)
     free(t.artists);
 }
 
+static void
+test_mb_apply(void)
+{
+    static const char *MB =
+        "{"
+        "\"id\":\"11111111-2222-3333-4444-555555555555\","
+        "\"title\":\"Synthetic Test Album\","
+        "\"date\":\"2016-09-23\","
+        "\"country\":\"XE\","
+        "\"barcode\":\"198704979941\","
+        "\"release-group\":{\"id\":\"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee\","
+        "\"primary-type\":\"Compilation\",\"first-release-date\":\"1984-06-01\"},"
+        "\"artist-credit\":[{\"name\":\"Alphaville\",\"joinphrase\":\"\"}],"
+        "\"labels\":[{\"label\":{\"name\":\"Example Records\"},"
+        "\"catalog-number\":\"ERCD 001\"}],"
+        "\"media\":[{\"format\":\"Digital\",\"position\":1,\"track-count\":1,"
+        "\"tracks\":[{\"id\":\"23232323-4545-6767-8989-abababababab\","
+        "\"number\":\"3\",\"title\":\"Big in Japan\","
+        "\"recording\":{\"id\":\"12121212-3434-5656-7878-909090909090\","
+        "\"isrcs\":[\"GBK3W2503556\"]}}]}]"
+        "}";
+    musicpack_manifest m;
+    const char *conf;
+
+    memset(&m, 0, sizeof m);
+    m.album_title = strdup("Synthetic Test Album");
+    m.album_artists = (musicpack_artist *) calloc(1, sizeof *m.album_artists);
+    m.album_artists[0].name = strdup("Alphaville");
+    m.album_artists[0].role = strdup("main");
+    m.album_artist_count = 1;
+    m.release.release_date = strdup("2016-09-23");
+    m.release.label = strdup("Example Records");
+    m.release.catalogue_number = strdup("ERCD 001");
+    m.barcode = strdup("198704979941");
+    m.musicbrainz_release_id = strdup("11111111-2222-3333-4444-555555555555");
+    m.discs = (musicpack_disc *) calloc(1, sizeof *m.discs);
+    m.disc_count = 1;
+    m.discs[0].disc = 1;
+    m.discs[0].tracks = (musicpack_track *) calloc(1, sizeof *m.discs[0].tracks);
+    m.discs[0].track_count = 1;
+    m.discs[0].tracks[0].number = 3;
+    m.discs[0].tracks[0].title = strdup("Big in Japan");
+    m.discs[0].tracks[0].isrc = strdup("GBK3W2503556");
+
+    conf = musicpack_mb_match_confidence(MB, &m);
+    CHECK(strcmp(conf, "exact") == 0, "confidence exact for matching release id");
+
+    CHECK(musicpack_mb_apply_release(MB, &m) == MUSICPACK_OK, "apply release");
+    CHECK(strcmp(m.album_title, "Synthetic Test Album") == 0, "title untouched");
+    CHECK(strcmp(m.barcode, "198704979941") == 0, "barcode untouched");
+    CHECK(m.release.release_date != 0 && strcmp(m.release.release_date, "2016-09-23") == 0,
+          "date untouched");
+    CHECK(strcmp(m.discs[0].tracks[0].isrc, "GBK3W2503556") == 0, "isrc untouched");
+    CHECK(m.release_type != 0 && strcmp(m.release_type, "compilation") == 0,
+          "release type filled from MB");
+    CHECK(m.original_release_date != 0 &&
+          strcmp(m.original_release_date, "1984-06-01") == 0,
+          "original date filled from MB");
+    CHECK(m.musicbrainz_release_group_id != 0 &&
+          strcmp(m.musicbrainz_release_group_id,
+                 "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee") == 0, "release group filled");
+    CHECK(m.release.country != 0 && strcmp(m.release.country, "XE") == 0,
+          "country filled from MB");
+    CHECK(m.discs[0].format != 0 && strcmp(m.discs[0].format, "Digital") == 0,
+          "medium format filled from MB");
+    CHECK(m.discs[0].tracks[0].musicbrainz_track_id != 0 &&
+          strcmp(m.discs[0].tracks[0].musicbrainz_track_id,
+                 "23232323-4545-6767-8989-abababababab") == 0, "track id filled");
+    CHECK(m.discs[0].tracks[0].musicbrainz_recording_id != 0 &&
+          strcmp(m.discs[0].tracks[0].musicbrainz_recording_id,
+                 "12121212-3434-5656-7878-909090909090") == 0, "recording id filled");
+    CHECK(m.release.present == 1, "release present");
+
+    /* confirmed: barcode match, release id differs */
+    free(m.musicbrainz_release_id);
+    m.musicbrainz_release_id = strdup("99999999-0000-0000-0000-000000000000");
+    conf = musicpack_mb_match_confidence(MB, &m);
+    CHECK(strcmp(conf, "confirmed") == 0, "confirmed on barcode match");
+    free(m.musicbrainz_release_id);
+    m.musicbrainz_release_id = 0;
+
+    /* confirmed: isrc + track-count match without barcode */
+    free(m.barcode);
+    m.barcode = strdup("9999999999999");
+    conf = musicpack_mb_match_confidence(MB, &m);
+    CHECK(strcmp(conf, "confirmed") == 0, "confirmed on isrc + count match");
+
+    /* probable: title match only */
+    free(m.discs[0].tracks[0].isrc);
+    m.discs[0].tracks[0].isrc = strdup("XXXX");
+    conf = musicpack_mb_match_confidence(MB, &m);
+    CHECK(strcmp(conf, "probable") == 0, "probable on title match");
+
+    /* none: no barcode, no isrc, no title */
+    free(m.album_title);
+    m.album_title = strdup("Totally Different");
+    conf = musicpack_mb_match_confidence(MB, &m);
+    CHECK(strcmp(conf, "none") == 0, "none on no match");
+
+    /* search envelope form is handled too */
+    {
+        char *env = (char *) malloc(strlen(MB) + 32);
+        snprintf(env, strlen(MB) + 32, "{\"releases\":[%s]}", MB);
+        conf = musicpack_mb_match_confidence(env, &m);
+        CHECK(strcmp(conf, "none") == 0, "envelope confidence");
+        CHECK(musicpack_mb_apply_release(env, &m) == MUSICPACK_OK, "envelope apply");
+        free(env);
+    }
+
+    musicpack_manifest_clear(&m);
+}
+
+static void
+test_manifest_add_new_fields(void)
+{
+    char dir[512];
+    char path[512];
+    FILE *f;
+    const char *manifest =
+        "{\"format\":\"musicpack\",\"version\":1,"
+        "\"album\":{\"title\":\"R\",\"artists\":[{\"name\":\"A\"}]},"
+        "\"media\":[{\"disc\":1,\"tracks\":[{"
+        "\"track\":1,\"title\":\"T\","
+        "\"audio\":{\"path\":\"audio/a.mpc\",\"sha256\":\"" HASH_AAA "\"}}]}]}";
+    char *readback;
+
+    if (make_temp_dir(dir, sizeof dir) != 0) {
+        CHECK(0, "temp dir");
+        return;
+    }
+    snprintf(path, sizeof path, "%s/manifest.json", dir);
+    f = fopen(path, "wb");
+    if (f != 0) {
+        fwrite(manifest, 1, strlen(manifest), f);
+        fclose(f);
+    }
+
+    {
+        musicpack_package *pkg = musicpack_package_open_dir(dir, 0);
+        musicpack_manifest *m;
+        CHECK(pkg != 0, "open package");
+        if (pkg != 0) {
+            m = musicpack_package_manifest_mutable(pkg);
+            m->release_type = strdup("ep");
+            m->identity_source = strdup("musicbrainz");
+            m->identity_confidence = strdup("exact");
+            CHECK(musicpack_package_save_manifest(pkg) == MUSICPACK_OK,
+                  "save with new fields");
+            musicpack_package_close(pkg);
+        }
+    }
+    readback = malloc(65536);
+    {
+        size_t n = 0;
+        FILE *r = fopen(path, "rb");
+        if (r != 0) {
+            n = fread(readback, 1, 65535, r);
+            readback[n] = '\0';
+            fclose(r);
+        }
+    }
+    CHECK(strstr(readback, "\"releaseType\"") != 0, "new album field saved");
+    CHECK(strstr(readback, "\"identity\"") != 0, "new top-level object saved");
+    CHECK(strstr(readback, "\"confidence\"") != 0, "identity confidence saved");
+    free(readback);
+    remove_temp_dir(dir, "manifest.json");
+}
+
 /* ------------------------------------------------------------------ */
 /* main                                                                */
 /* ------------------------------------------------------------------ */
@@ -1661,6 +1829,7 @@ int main(int argc, char **argv)
     test_parse_valid();
     test_parse_invalid();
     test_unknown_field_roundtrip();
+    test_manifest_add_new_fields();
     test_multidisc();
     test_loudness_parse();
     test_release_model();
@@ -1695,6 +1864,7 @@ int main(int argc, char **argv)
         test_map_track_legacy_and_ape();
         test_map_source();
         test_projection();
+        test_mb_apply();
     }
 
     if (failures) {
