@@ -68,11 +68,12 @@ jobs:
         shell: bash
         run: |
           if [ "$RUNNER_OS" = "Windows" ]; then
-            # MSVC multi-config builds place binaries in the config dir.
-            REF_MPCENC="$(cygpath -u "$RUNNER_TEMP")/ref-build/Release/mpcenc/mpcenc.exe"
-            [ -x "$REF_MPCENC" ] || REF_MPCENC="$(cygpath -u "$RUNNER_TEMP")/ref-build/mpcenc/mpcenc.exe"
+            # MSVC multi-config builds put binaries in a per-config dir whose
+            # exact layout varies by generator; locate it rather than guess.
+            REF_MPCENC="$(find "$RUNNER_TEMP/ref-build" -name mpcenc.exe -type f | head -1)"
           else
             REF_MPCENC="$RUNNER_TEMP/ref-build/mpcenc/mpcenc"
           fi
+          [ -x "$REF_MPCENC" ] || { echo "reference mpcenc not found"; exit 1; }
           export REF_MPCENC
           ctest --test-dir build -C Release -R "^compat$" --output-on-failure
