@@ -66,6 +66,7 @@ static char g_ref_flac[4096];
 #ifdef _WIN32
 # include <io.h>
 # include <direct.h>
+# include <sys/stat.h>
 # include "dirent.h"
 # define mkdir_one(p) _mkdir(p)
 # define stat_t struct _stat

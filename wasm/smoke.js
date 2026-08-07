@@ -88,27 +88,24 @@ require(moduleJs)().then(async (Module) => {
   if (pcmMem.length / channels !== EXPECTED.length)
     fail(`decoded ${pcmMem.length / channels} frames != ${EXPECTED.length}`);
 
-  // ---- path 2: JS-callback range reader (musicpack-server HTTP Range
-  //      plumbing). The fake source serves byte ranges from `bytes`, like
-  //      the browser RangeReader does over HTTP.
+  // ---- path 2: JS range reader (musicpack-server HTTP Range plumbing).
+  //      Install the implementations on the module; the fake source serves
+  //      byte ranges from `bytes`, like the browser RangeReader does over
+  //      HTTP. The read implementation is async, exercising Asyncify.
   const h2 = Module._mpc_wasm_create();
   if (h2 < 0) fail("mpc_wasm_create (range) failed");
   let rpos = 0;
-  async function fakeRead(ptr, size) {
+  Module.mpcRangeRead = async function (ptr, size) {
     const n = Math.min(size, bytes.length - rpos);
     if (n <= 0) return 0;
     Module.HEAPU8.set(bytes.subarray(rpos, rpos + n), ptr);
     rpos += n;
     return n;
-  }
-  function fakeSeek(offset) { rpos = offset; return 1; }
-  function fakeTell() { return rpos; }
-  const readFn = Module.addFunction(fakeRead, "iii");
-  const seekFn = Module.addFunction(fakeSeek, "id");
-  const tellFn = Module.addFunction(fakeTell, "d");
+  };
+  Module.mpcRangeSeek = function (offset) { rpos = offset; return 1; };
+  Module.mpcRangeTell = function () { return rpos; };
 
-  const rangeErr = await Module._mpc_wasm_open_range(
-    h2, bytes.length, readFn, seekFn, tellFn);
+  const rangeErr = await Module._mpc_wasm_open_range(h2, bytes.length);
   if (rangeErr !== 0) fail(`mpc_wasm_open_range returned ${rangeErr}`);
 
   const s1 = await Module._mpc_wasm_seek_sample(h2, 22050);
@@ -118,9 +115,7 @@ require(moduleJs)().then(async (Module) => {
 
   const pcmRange = await decodeAll(Module, h2, channels);
   Module._mpc_wasm_destroy(h2);
-  Module.removeFunction(readFn);
-  Module.removeFunction(seekFn);
-  Module.removeFunction(tellFn);
+  Module.mpcRangeRead = Module.mpcRangeSeek = Module.mpcRangeTell = null;
 
   if (pcmRange.length !== pcmMem.length)
     fail(`range decoded ${pcmRange.length} samples != memory ${pcmMem.length}`);

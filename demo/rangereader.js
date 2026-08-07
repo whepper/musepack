@@ -59,42 +59,31 @@
     }
   }
 
-  /* Registers read/seek/tell into the wasm function table.
-     Returns the indices (pass to mpc_wasm_open_range). */
-  async function createRangeCallbacks(Module, reader) {
+  /* Installs read/seek/tell implementations on the module. These are the
+     real wasm imports (range_library.js) that Asyncify suspends around.
+     Returns the reader so the worker can keep a reference. */
+  async function installRangeCallbacks(Module, reader) {
     const HEAPU8 = Module.HEAPU8;
 
-    async function wasmRead(ptr, size) {
+    Module.mpcRangeRead = async function (ptr, size) {
       const data = await reader.read(reader.pos, size);
       if (data.length === 0) return 0;
       HEAPU8.set(data, ptr);
       reader.pos += data.length;
       return data.length;
-    }
-    function wasmSeek(offset) {
+    };
+    Module.mpcRangeSeek = function (offset) {
       reader.pos = offset;
       return 1;
-    }
-    function wasmTell() {
+    };
+    Module.mpcRangeTell = function () {
       return reader.pos;
-    }
-
-    const readFn = Module.addFunction(wasmRead, 'iii');
-    const seekFn = Module.addFunction(wasmSeek, 'id');
-    const tellFn = Module.addFunction(wasmTell, 'd');
-    return { readFn, seekFn, tellFn, reader };
-  }
-
-  function removeRangeCallbacks(Module, fns) {
-    if (!fns) return;
-    Module.removeFunction(fns.readFn);
-    Module.removeFunction(fns.seekFn);
-    Module.removeFunction(fns.tellFn);
+    };
+    return reader;
   }
 
   global.MusicPackRange = {
     RangeReader,
-    createRangeCallbacks,
-    removeRangeCallbacks,
+    installRangeCallbacks,
   };
 })(typeof self !== 'undefined' ? self : this);

@@ -25,7 +25,7 @@ let channels = 2;
 let playing = false;
 let eos = false;
 let pumping = false;
-let rangeFns = null;
+let rangeReader = null;
 
 function post(msg) { self.postMessage(msg, msg.samples ? [msg.samples.buffer] : undefined); }
 
@@ -50,7 +50,7 @@ async function open(buffer) {
 }
 
 /* Opens a track served by a musicpack-server over HTTP Range: the decoder's
-   reads/seek go through the JS range callbacks, so playback and seeking
+   reads/seek go through the JS range imports, so playback and seeking
    exercise the server's Range handling end to end. */
 async function openUrl(url, size) {
   if (handle >= 0) destroy();
@@ -58,10 +58,9 @@ async function openUrl(url, size) {
   if (handle < 0) throw new Error('mpc_wasm_create failed');
 
   const reader = new MusicPackRange.RangeReader(url, size);
-  rangeFns = await MusicPackRange.createRangeCallbacks(Module, reader);
+  rangeReader = await MusicPackRange.installRangeCallbacks(Module, reader);
 
-  const err = await Module._mpc_wasm_open_range(
-    handle, size, rangeFns.readFn, rangeFns.seekFn, rangeFns.tellFn);
+  const err = await Module._mpc_wasm_open_range(handle, size);
   if (err !== 0) throw new Error('mpc_wasm_open_range returned ' + err);
 
   pcmPtr = Module._malloc(FRAMES_PER_CHUNK * channels * 4);
@@ -85,9 +84,9 @@ function destroy() {
     if (heapPtr) Module._free(heapPtr);
     Module._mpc_wasm_destroy(handle);
   }
-  if (rangeFns) {
-    MusicPackRange.removeRangeCallbacks(Module, rangeFns);
-    rangeFns = null;
+  if (rangeReader) {
+    Module.mpcRangeRead = Module.mpcRangeSeek = Module.mpcRangeTell = null;
+    rangeReader = null;
   }
   handle = -1; heapPtr = 0; pcmPtr = 0;
 }
