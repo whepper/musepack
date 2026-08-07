@@ -54,6 +54,8 @@ CheckKey ( void )
 
 # ifdef USE_TERMIOS
 #  include <termios.h>
+#  include <sys/select.h>
+#  include <sys/time.h>
 
 static struct termios  stored_settings;
 

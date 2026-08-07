@@ -15,7 +15,10 @@ option(MPC_BUILD_TESTS   "Build and run the fixture regression tests" OFF)
 option(MPC_BUILD_MPCGAIN "Build mpcgain (requires libreplaygain)" ON)
 option(MPC_BUILD_MPCCHAP "Build mpcchap (requires libcuefile)" ON)
 
-if(WIN32 AND NOT MSVC)
+if(WIN32)
+  # Static by default on Windows: the MSVC DLL/import-lib build is more
+  # fragile and the historical Windows build was static. Shared can still be
+  # enabled explicitly with -DMPC_BUILD_SHARED=ON.
   set(MPC_BUILD_SHARED OFF)
 endif()
 
