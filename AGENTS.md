@@ -94,7 +94,11 @@ because `mpcgain`/`mpcchap` hard-fail without libreplaygain/libcuefile and
 `mpcdec`/`mpc2sv8`/`mpccut` declare duplicate `add_executable` targets under
 MSVC. It also rewrites the reference's hardcoded `-O3` CFLAGS to `-O0`
 (matching the default CI build) and adds `-Wno-error=incompatible-pointer-types`
-for GCC 14+.
+for GCC 14+. For MSVC it applies two source fixes the modernized tree also
+made: renames the `log2`/`log2_lost` tables in `libmpcenc/bitstream.c` to
+`mpc_log2`/`mpc_log2_lost` (collides with C99 `log2()`) and removes the
+`_MSC_VER` `asinh` shim in `libmpcpsy/psy_tab.c` (collides with the CRT
+function).
 
 Verified facts (from the compatibility audit):
 - Reference vs modernized are byte-identical at matched optimization

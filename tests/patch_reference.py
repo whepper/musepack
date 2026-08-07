@@ -23,6 +23,25 @@ import sys
 KEEP = ("libmpcpsy", "libmpcenc", "mpcenc", "include")
 
 
+def patch_file(path, repl, label):
+    """Apply a list of (old, new) replacements to a source file.
+
+    Each replacement is skipped if `new` is already present, so re-running
+    the patch is safe (idempotent).
+    """
+    if not os.path.isfile(path):
+        print("warning: no file at %s (skipping %s)" % (path, label), file=sys.stderr)
+        return
+    with open(path, "r", encoding="utf-8") as f:
+        txt = f.read()
+    for old, new in repl:
+        if new not in txt and old in txt:
+            txt = txt.replace(old, new)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(txt)
+    print("patched %s (%s)" % (path, label))
+
+
 def main():
     if len(sys.argv) != 2:
         print("usage: patch_reference.py <reference-source-dir>", file=sys.stderr)
@@ -59,6 +78,30 @@ def main():
     )
     with open(path, "w", encoding="utf-8") as f:
         f.write(txt)
+
+    # MSVC-only source fixes. These are upstream bugs that the modernized
+    # tree already fixes (renamed table, removed the asinh shim); on MSVC
+    # they are hard errors, on GCC/Clang they are harmless redefinitions.
+    patch_file(
+        os.path.join(top, "libmpcenc", "bitstream.c"),
+        [
+            ("static const mpc_uint8_t log2[32]", "static const mpc_uint8_t mpc_log2[32]"),
+            ("static const mpc_uint8_t log2_lost[32]", "static const mpc_uint8_t mpc_log2_lost[32]"),
+            ("log2_lost[max - 1]", "mpc_log2_lost[max - 1]"),
+            ("log2[max - 1]", "mpc_log2[max - 1]"),
+        ],
+        "log2/log2_lost -> mpc_log2/mpc_log2_lost",
+    )
+    patch_file(
+        os.path.join(top, "libmpcpsy", "psy_tab.c"),
+        [
+            (
+                "#ifdef _MSC_VER\nstatic double\nasinh ( double x )\n{\n    return x >= 0  ?  log (sqrt (x*x+1) + x)  :  -log (sqrt (x*x+1) - x);\n}\n#endif\n\n",
+                "",
+            ),
+        ],
+        "remove _MSC_VER asinh shim",
+    )
 
     print("patched %s (encoder-only build, -O0)" % path)
     return 0
