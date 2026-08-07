@@ -723,6 +723,13 @@ test_determinism(void)
 /* ------------------------------------------------------------------ */
 
 static void
+verify_diag(void *ctx, const char *message, int is_error)
+{
+    (void) ctx;
+    fprintf(stderr, "verify: %s%s\n", is_error ? "error: " : "warning: ", message);
+}
+
+static void
 test_open_musicpack(const char *dir)
 {
     musicpack_package *pkg = musicpack_package_open_dir(dir, 0);
@@ -738,7 +745,7 @@ test_open_musicpack(const char *dir)
     CHECK(m->disc_count == 1 && m->discs[0].track_count == 4, "4 tracks");
     CHECK(m->artwork_count == 1 && m->booklet_count == 1, "artwork + booklet");
     CHECK(m->lyrics_count == 2 && m->extras_count == 1, "lyrics + extras");
-    CHECK(musicpack_package_verify(pkg, &rep, 0, 0) == MUSICPACK_OK, "verify ok");
+    CHECK(musicpack_package_verify(pkg, &rep, verify_diag, 0) == MUSICPACK_OK, "verify ok");
     CHECK(rep.errors == 0, "no errors");
 
     /* Musepack handoff: decode track 1 through libmusepack */
@@ -779,7 +786,7 @@ test_open_flac(const char *dir)
     CHECK(m->disc_count == 1 && m->discs[0].track_count == 3, "3 flac tracks");
     CHECK(strcmp(m->discs[0].tracks[0].audio.path + strlen(m->discs[0].tracks[0].audio.path) - 5,
                  ".flac") == 0, "flac codec independence");
-    CHECK(musicpack_package_verify(pkg, &rep, 0, 0) == MUSICPACK_OK, "verify ok");
+    CHECK(musicpack_package_verify(pkg, &rep, verify_diag, 0) == MUSICPACK_OK, "verify ok");
     musicpack_package_close(pkg);
 }
 
