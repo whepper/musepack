@@ -166,6 +166,14 @@ def main():
          "-t", "Synthetic Test Compilation",
          "-a", "Alphaville",
          "-a", "Bleachers",
+         "-R", "compilation",
+         "-O", "1984-06-01",
+         "-d", "2016-09-23",
+         "-e", "2016 Digital Remaster",
+         "-C", "XE",
+         "-l", "Example Records",
+         "-c", "ERCD 001",
+         "-m", "Digital",
          src], "import musicpack album")
 
     # --- FLAC source album ----------------------------------------------
@@ -186,6 +194,14 @@ def main():
     run([args.musicpack, "import", "-o", pkg2,
          "-t", "Synthetic Classical Compilation",
          "-a", "Synthetic Chamber Orchestra",
+         "-R", "album",
+         "-O", "1998-03-10",
+         "-d", "1998-03-10",
+         "-e", "1998 European CD",
+         "-C", "Europe",
+         "-l", "Example Classics",
+         "-c", "ECL 2002",
+         "-m", "CD",
          src2], "import flac album")
 
     subprocess.run(["rm", "-rf", tmp])

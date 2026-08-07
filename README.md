@@ -73,8 +73,9 @@ with a browser playback demo:
 ## libmusicpack — the `.mpack` package model
 
 `libmusicpack` owns MusicPack package semantics: the `.mpack` v1 manifest,
-album/release/track model, assets, SHA-256 integrity, BS.1770 loudness and
-directory-bundle storage. It depends on `libmusepack` (for the Musepack
+album/release-group → release/edition → media → track model, assets, SHA-256
+integrity, BS.1770-5 loudness (measured per track and as an album program)
+and directory-bundle storage. It depends on `libmusepack` (for the Musepack
 track handoff) but never the reverse. It builds as `libmusicpack`, exported
 as `MusicPack::Package`:
 
@@ -98,10 +99,13 @@ musepack_decoder *d = musepack_decoder_open(&reader, 0);
 ```
 
 The `musicpack` CLI (`musicpack info|verify|create|import`) builds, inspects
-and validates directory-form packages. The normative spec and machine-readable
-schema live in `specs/musicpack-v1.md` and `specs/musicpack-v1.schema.json`;
-committed reference packages (a Musepack album and a FLAC album) are under
-`tests/reference/`.
+and validates directory-form packages. `info` shows collector identity
+(release type, edition, release/original dates, country, label, catalogue
+number, medium, barcode); `create`/`import` accept release options and
+`import` never invents edition/country/label/catalogue/type from filenames.
+The normative spec and machine-readable schema live in `specs/musicpack-v1.md`
+and `specs/musicpack-v1.schema.json`; committed reference packages (a Musepack
+album and a FLAC album) are under `tests/reference/`.
 
 ## Tools
 

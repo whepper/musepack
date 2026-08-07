@@ -27,15 +27,60 @@
             }
           }
         },
-        "releaseDate": { "type": "string" },
+        "releaseType": {
+          "description": "Release type of the release group (album level). Never inferred from track count.",
+          "type": "string",
+          "enum": [
+            "album",
+            "ep",
+            "single",
+            "maxi-single",
+            "compilation",
+            "soundtrack",
+            "live-album",
+            "remix-album",
+            "box-set",
+            "other"
+          ]
+        },
+        "originalReleaseDate": {
+          "description": "First release date of the release group (ISO-8601).",
+          "type": "string"
+        },
         "genres": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "release": {
+      "description": "The specific release/edition this package represents: a collectible digital object.",
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "releaseDate": {
+          "description": "Release date of this specific release/edition (ISO-8601).",
+          "type": "string"
+        },
+        "edition": { "type": "string" },
+        "country": {
+          "description": "Release country/territory; ISO 3166-1 alpha-2 is recommended (e.g. GB, US, XE).",
+          "type": "string"
+        },
+        "label": { "type": "string" },
+        "catalogueNumber": { "type": "string" },
+        "notes": { "type": "string" }
       }
     },
     "identifiers": {
       "type": "object",
       "additionalProperties": true,
       "properties": {
-        "musicbrainzReleaseId": { "type": "string" },
+        "musicbrainzReleaseGroupId": {
+          "description": "Release-group (album) identity; the abstract release the album belongs to.",
+          "type": "string"
+        },
+        "musicbrainzReleaseId": {
+          "description": "Specific release identity (this release/edition, not the release group).",
+          "type": "string"
+        },
         "barcode": { "type": "string" }
       }
     },
@@ -65,6 +110,20 @@
         "required": ["disc", "tracks"],
         "properties": {
           "disc": { "type": "integer", "minimum": 1 },
+          "format": {
+            "description": "Physical or digital medium format of this medium.",
+            "type": "string",
+            "enum": [
+              "CD",
+              "SACD",
+              "Vinyl",
+              "Cassette",
+              "Digital",
+              "Blu-ray Audio",
+              "DVD-Audio",
+              "Other"
+            ]
+          },
           "title": { "type": "string" },
           "tracks": {
             "type": "array",
@@ -92,7 +151,11 @@
                 "identifiers": {
                   "type": "object",
                   "additionalProperties": true,
-                  "properties": { "isrc": { "type": "string" } }
+                  "properties": {
+                    "isrc": { "type": "string" },
+                    "musicbrainzTrackId": { "type": "string" },
+                    "musicbrainzRecordingId": { "type": "string" }
+                  }
                 },
                 "source": {
                   "type": "object",
@@ -112,12 +175,19 @@
                 },
                 "duration": { "type": "number", "exclusiveMinimum": 0 },
                 "loudness": {
+                  "description": "Per-track BS.1770-5 measured loudness.",
                   "type": "object",
                   "additionalProperties": true,
                   "required": ["trackLUFS", "truePeakDbTP"],
                   "properties": {
-                    "trackLUFS": { "type": "number" },
-                    "truePeakDbTP": { "type": "number" }
+                    "trackLUFS": {
+                      "description": "Integrated loudness in dB LUFS (ITU-R BS.1770-5).",
+                      "type": "number"
+                    },
+                    "truePeakDbTP": {
+                      "description": "True peak in dBTP (ITU-R BS.1770-5, 4x oversampling).",
+                      "type": "number"
+                    }
                   }
                 },
                 "audio": {
@@ -156,11 +226,22 @@
     "lyrics": { "$ref": "#/$defs/assetArray" },
     "extras": { "$ref": "#/$defs/assetArray" },
     "loudness": {
+      "description": "Album (program) loudness, measured by feeding all tracks in order through one meter.",
       "type": "object",
       "additionalProperties": true,
       "properties": {
-        "albumLUFS": { "type": "number" },
-        "albumTruePeakDbTP": { "type": "number" }
+        "algorithm": {
+          "description": "Loudness algorithm revision used for the measured values.",
+          "type": "string"
+        },
+        "albumLUFS": {
+          "description": "Integrated loudness over the whole album program in dB LUFS (ITU-R BS.1770-5).",
+          "type": "number"
+        },
+        "albumTruePeakDbTP": {
+          "description": "Maximum relevant true peak across the album program in dBTP (ITU-R BS.1770-5).",
+          "type": "number"
+        }
       }
     },
     "provenance": {

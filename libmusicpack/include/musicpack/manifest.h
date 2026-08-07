@@ -82,7 +82,9 @@ typedef struct musicpack_track {
     char *title;
     musicpack_artist *artists; ///< optional per-track override; may be NULL
     size_t artist_count;
-    char *isrc;
+    char *isrc;               ///< optional
+    char *musicbrainz_track_id; ///< optional recording-then-release-specific (MB track ID)
+    char *musicbrainz_recording_id; ///< optional durable recording identity
     char *source_store;   ///< optional provenance (e.g. "Deezer")
     char *source_track_id; ///< optional provider track id
     char *source_audio_codec; ///< optional pre-encoding codec ("flac")
@@ -96,6 +98,7 @@ typedef struct musicpack_track {
 /// A disc / medium.
 typedef struct musicpack_disc {
     int disc;
+    char *format; ///< optional medium format ("CD", "Digital", ...); may be NULL
     char *title; ///< optional; may be NULL
     musicpack_track *tracks;
     size_t track_count;
@@ -107,15 +110,33 @@ typedef struct musicpack_artwork {
     musicpack_asset asset;
 } musicpack_artwork;
 
+/// The specific release/edition this package represents.
+///
+/// Album-level fields describe the release GROUP (what album this belongs
+/// to); this struct describes the exact collectible release/edition (which
+/// specific CD, remaster, digital edition, ... the package holds).
+typedef struct musicpack_release {
+    int present;              ///< 1 when any field is set
+    char *release_date;       ///< optional ISO-8601
+    char *edition;            ///< optional (e.g. "2016 Remaster")
+    char *country;            ///< optional; ISO 3166-1 alpha-2 recommended
+    char *label;              ///< optional
+    char *catalogue_number;   ///< optional
+    char *notes;              ///< optional edition/release notes
+} musicpack_release;
+
 /// The parsed v1 manifest.
 typedef struct musicpack_manifest {
     char *album_title;
     musicpack_artist *album_artists;
     size_t album_artist_count;
-    char *release_date;    ///< optional ISO-8601
+    char *release_type;    ///< optional: album|ep|single|...|other (closed enum)
+    char *original_release_date; ///< optional ISO-8601 (release-group first release)
     char **genres;         ///< optional multi-value
     size_t genre_count;
-    char *musicbrainz_release_id; ///< optional
+    musicpack_release release;   ///< the specific release/edition
+    char *musicbrainz_release_group_id; ///< optional (release-group identity)
+    char *musicbrainz_release_id; ///< optional (specific-release identity)
     char *barcode;                ///< optional
     char *identity_source;        ///< optional: musicbrainz|store|local
     char *identity_confidence;    ///< optional: exact|confirmed|probable|none
@@ -134,6 +155,7 @@ typedef struct musicpack_manifest {
     size_t extras_count;
     int has_album_loudness;
     musicpack_loudness album_loudness;
+    char *loudness_algorithm;  ///< optional BS.1770 revision (e.g. "ITU-R BS.1770-5")
     char *provenance_tool;       ///< optional
     char *provenance_tool_version; ///< optional
 } musicpack_manifest;

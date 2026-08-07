@@ -34,10 +34,20 @@
 /// \file loudness.h
 /// BS.1770-only loudness model and measurement.
 ///
-/// The `.mpack` canonical loudness metadata is measured with ITU-R BS.1770-4
-/// only. ReplayGain values read from `.mpc` are import-time compatibility
-/// data, never canonical MusicPack metadata. Gain is derived, not stored:
-/// see musicpack_loudness_compute_gain().
+/// The `.mpack` canonical loudness metadata is measured with **ITU-R
+/// BS.1770-5** (K-weighted, gated integrated loudness and true peak).
+/// ReplayGain values read from `.mpc` are import-time compatibility data,
+/// never canonical MusicPack metadata. Gain is derived, not stored: see
+/// musicpack_loudness_compute_gain().
+///
+/// What MusicPack implements (BS.1770-5):
+///   - integrated loudness: K-weighting, 400 ms blocks, -70 LU absolute gate
+///     and -10 LU relative gate (the standard program-loudness algorithm);
+///   - true peak: 4x-oversampled (49-tap sinc) interpolated peak per channel,
+///     floors at -70 dBTP.
+/// Not stored: loudness range (LRA) and channel configurations above stereo
+/// (BS.1770-5's multichannel additions); stereo/mono results are identical to
+/// BS.1770-4.
 #ifndef MUSICPACK_LOUDNESS_H_
 #define MUSICPACK_LOUDNESS_H_
 #pragma once
@@ -51,7 +61,10 @@
 extern "C" {
 #endif
 
-/// Opaque BS.1770-4 meter (K-weighted, integrated loudness, true peak).
+/// The canonical loudness algorithm revision used by `.mpack` v1.
+#define MUSICPACK_LOUDNESS_STANDARD "ITU-R BS.1770-5"
+
+/// Opaque BS.1770-5 meter (K-weighted, integrated loudness, true peak).
 typedef struct musicpack_meter musicpack_meter;
 
 /// Creates a meter for a stream.

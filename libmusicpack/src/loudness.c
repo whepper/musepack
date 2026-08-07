@@ -32,7 +32,12 @@
   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 /// \file loudness.c
-/// BS.1770-4 loudness measurement (via vendored libebur128) and helpers.
+/// BS.1770-5 loudness measurement (via vendored libebur128) and helpers.
+///
+/// libebur128 is a BS.1770-4 implementation; for the mono/stereo channel
+/// counts MusicPack meters, BS.1770-5 uses the same integrated-loudness and
+/// true-peak algorithms, so the results are identical. The `.mpack` canonical
+/// revision is BS.1770-5 (see MUSICPACK_LOUDNESS_STANDARD).
 
 #include <float.h>
 #include <math.h>

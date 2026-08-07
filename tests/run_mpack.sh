@@ -125,6 +125,130 @@ else
     pass "traversal manifest rejected"
 fi
 
+# 6. collector metadata: create a package with release/edition flags
+CREAT="$TMP/collector.mpack"
+A1="$MPC_REF/audio/01 - Alphaville - Big in Japan.mpc"
+A2="$MPC_REF/audio/02 - Bleachers - The Van.mpc"
+if "$MUSICPACK" create -o "$CREAT" -t "Collector Album" -a "Test Artist" \
+    -R album -O 1986-06-16 -d 2016-09-23 -e "2016 Remaster" \
+    -l "Example Records" -c "ABC 123" -C GB -m CD \
+    -T "$A1" -n "Track One" -T "$A2" -n "Track Two" >/dev/null 2>&1; then
+    pass "create with release flags"
+else
+    fail "create with release flags"
+fi
+
+if python3 - "$CREAT/manifest.json" <<'EOF'
+import json, sys
+m = json.load(open(sys.argv[1]))
+rel = m["release"]
+assert m["album"]["releaseType"] == "album"
+assert m["album"]["originalReleaseDate"] == "1986-06-16"
+assert rel["releaseDate"] == "2016-09-23"
+assert rel["edition"] == "2016 Remaster"
+assert rel["label"] == "Example Records"
+assert rel["catalogueNumber"] == "ABC 123"
+assert rel["country"] == "GB"
+assert m["media"][0]["format"] == "CD"
+assert m["loudness"]["algorithm"] == "ITU-R BS.1770-5"
+print("ok")
+EOF
+then
+    pass "release metadata in created manifest"
+else
+    fail "release metadata in created manifest"
+fi
+
+# 6b. album loudness must be a program measurement: feed a loud and a quiet
+# track into one package; albumLUFS must NOT be the mean of track LUFS (the
+# quiet track is relative-gated out of the album program) and album true peak
+# must equal the max of track true peaks. Skipped when ffmpeg (needed to
+# measure .wav) is unavailable; the concatenation-semantics proof lives in the
+# C test test_album_loudness_aggregation.
+python3 - "$TMP" <<'EOF'
+import math, os, struct, sys, wave
+tmp = sys.argv[1]
+def wav(path, amp, rate=44100):
+    w = wave.open(path, "wb")
+    w.setnchannels(2); w.setsampwidth(2); w.setframerate(rate)
+    frames = bytearray()
+    for i in range(rate * 3):
+        v = int(amp * 32767 * math.sin(2 * math.pi * 1000 * i / rate))
+        frames += struct.pack("<hh", v, v)
+    w.writeframes(bytes(frames)); w.close()
+wav(os.path.join(tmp, "loud.wav"), 0.95)
+wav(os.path.join(tmp, "quiet.wav"), 0.05)
+EOF
+WAVPACK="$TMP/lq.mpack"
+if "$MUSICPACK" create -o "$WAVPACK" -t "Loud Quiet" -a "A" -R album -m Digital \
+    -T "$TMP/loud.wav" -n "Loud" -T "$TMP/quiet.wav" -n "Quiet" >/dev/null 2>&1; then
+    pass "create mixed-level wav package"
+else
+    fail "create mixed-level wav package"
+fi
+if python3 - "$WAVPACK/manifest.json" <<'EOF'
+import json, sys
+m = json.load(open(sys.argv[1]))
+tl = [t.get("loudness") for d in m["media"] for t in d["tracks"]]
+if any(x is None for x in tl):
+    print("skip: ffmpeg unavailable")
+    sys.exit(0)
+assert "loudness" in m
+assert m["loudness"]["algorithm"] == "ITU-R BS.1770-5"
+al = m["loudness"]["albumLUFS"]
+tp = m["loudness"]["albumTruePeakDbTP"]
+lufs = [x["trackLUFS"] for x in tl]
+peaks = [x["truePeakDbTP"] for x in tl]
+mean = sum(lufs) / len(lufs)
+assert abs(al - mean) > 1.0, "albumLUFS must not be the arithmetic mean of track LUFS"
+assert abs(al - max(lufs)) < 1.0, "loud track dominates the album measurement"
+assert abs(tp - max(peaks)) < 0.01, "album true peak must be the max of track true peaks"
+print("ok")
+EOF
+then
+    pass "album loudness is a program measurement"
+else
+    fail "album loudness is a program measurement"
+fi
+
+# 6c. `info` shows collector metadata first-class
+OUT="$("$MUSICPACK" info "$CREAT" 2>&1)"
+if echo "$OUT" | grep -q "^Type: album" \
+   && echo "$OUT" | grep -q "^Edition: 2016 Remaster" \
+   && echo "$OUT" | grep -q "^Release date: 2016-09-23" \
+   && echo "$OUT" | grep -q "^Original release: 1986-06-16" \
+   && echo "$OUT" | grep -q "^Label: Example Records" \
+   && echo "$OUT" | grep -q "^Catalogue: ABC 123" \
+   && echo "$OUT" | grep -q "^Country: GB" \
+   && echo "$OUT" | grep -q "^Medium: CD"; then
+    pass "info shows collector metadata"
+else
+    fail "info shows collector metadata"
+fi
+
+# 6d. same album represented by two distinct releases (1987 CD vs 2016 Digital)
+E1="$TMP/ed1987.mpack"; E2="$TMP/ed2016.mpack"
+"$MUSICPACK" create -o "$E1" -t "Two Faces" -a "X" -R album -O 1987-03-01 \
+    -d 1987-03-01 -e "1987 CD" -m CD -T "$A1" >/dev/null 2>&1
+"$MUSICPACK" create -o "$E2" -t "Two Faces" -a "X" -R album -O 1987-03-01 \
+    -d 2016-09-23 -e "2016 Digital Remaster" -m Digital -T "$A2" >/dev/null 2>&1
+if python3 - "$E1/manifest.json" "$E2/manifest.json" <<'EOF'
+import json, sys
+a = json.load(open(sys.argv[1]))
+b = json.load(open(sys.argv[2]))
+assert a["album"]["title"] == b["album"]["title"]
+assert a["album"]["originalReleaseDate"] == b["album"]["originalReleaseDate"]
+assert a["release"]["edition"] != b["release"]["edition"]
+assert a["release"]["releaseDate"] != b["release"]["releaseDate"]
+assert a["media"][0]["format"] == "CD" and b["media"][0]["format"] == "Digital"
+print("ok")
+EOF
+then
+    pass "same album, two distinct editions"
+else
+    fail "same album, two distinct editions"
+fi
+
 echo
 echo "== $PASSED passed, $FAILED failed =="
 [ "$FAILED" -eq 0 ]

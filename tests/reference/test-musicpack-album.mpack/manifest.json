@@ -10,11 +10,21 @@
       {
         "name": "Bleachers"
       }
-    ]
+    ],
+    "releaseType": "compilation",
+    "originalReleaseDate": "1984-06-01"
+  },
+  "release": {
+    "releaseDate": "2016-09-23",
+    "edition": "2016 Digital Remaster",
+    "country": "XE",
+    "label": "Example Records",
+    "catalogueNumber": "ERCD 001"
   },
   "media": [
     {
       "disc": 1,
+      "format": "Digital",
       "tracks": [
         {
           "track": 1,
@@ -99,5 +109,10 @@
       "path": "extras/notes.txt",
       "sha256": "67e7a48bca29ab66eb141759661593b9a30f090c4b1e942365bedb1dd13380d3"
     }
-  ]
+  ],
+  "loudness": {
+    "algorithm": "ITU-R BS.1770-5",
+    "albumLUFS": -7.2792484,
+    "albumTruePeakDbTP": -4.1897838
+  }
 }

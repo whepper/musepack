@@ -47,12 +47,14 @@
 # include <direct.h>
 # define mkdir_p_one(p) _mkdir(p)
 # define POPEN _popen
+# define POPEN_MODE "rb" /* binary mode matters on Windows */
 # define PCLOSE _pclose
 #else
 # include <dirent.h>
 # include <sys/stat.h>
 # define mkdir_p_one(p) mkdir(p, 0755)
 # define POPEN popen
+# define POPEN_MODE "r"  /* POSIX popen only accepts "r"/"w"; "rb" fails on macOS */
 # define PCLOSE pclose
 #endif
 
@@ -143,10 +145,14 @@ codec_for_path(const char *path)
 }
 
 /* Measures integrated loudness + true peak of an audio file. Returns 0 on
-   success (has=1), 1 if loudness could not be measured. */
+   success (has=1), 1 if loudness could not be measured.
+   If `album` is non-NULL it holds a package-wide album meter (created lazily
+   from the first measured track's format); the same PCM is fed to both the
+   per-track meter and the album meter so album loudness is measured over the
+   concatenated program, never aggregated from per-track values. */
 static int
 measure_loudness(const char *path, int *has, double *lufs, double *peak,
-                 double *duration)
+                 double *duration, musicpack_meter **album)
 {
     musicpack_meter *meter = 0;
     int rc = 1;
@@ -177,8 +183,13 @@ measure_loudness(const char *path, int *has, double *lufs, double *peak,
             *duration = (double) musepack_decoder_length_samples(dec) / (double) rate;
         meter = musicpack_meter_new(ch, rate, 0);
         if (meter != 0) {
-            while (musepack_decoder_read(dec, pcm, 1152, &frames) == MUSEPACK_OK)
+            if (album != 0 && *album == 0)
+                *album = musicpack_meter_new(ch, rate, 0);
+            while (musepack_decoder_read(dec, pcm, 1152, &frames) == MUSEPACK_OK) {
                 musicpack_meter_add_frames(meter, pcm, frames);
+                if (album != 0 && *album != 0)
+                    musicpack_meter_add_frames(*album, pcm, frames);
+            }
             rc = 0;
         }
         musepack_decoder_close(dec);
@@ -194,14 +205,18 @@ measure_loudness(const char *path, int *has, double *lufs, double *peak,
         meter = musicpack_meter_new(2, 44100, 0);
         if (meter == 0)
             return 1;
+        if (album != 0 && *album == 0)
+            *album = musicpack_meter_new(2, 44100, 0);
         snprintf(cmd, sizeof cmd,
                  "ffmpeg -v error -i '%s' -f f32le -ac 2 -ar 44100 - 2>/dev/null",
                  path);
-        pipe = POPEN(cmd, "rb");
+        pipe = POPEN(cmd, POPEN_MODE);
         if (pipe == 0)
             goto out;
         while ((n = fread(buf, sizeof(float), sizeof buf / sizeof(float), pipe)) > 0) {
             musicpack_meter_add_frames(meter, buf, n / 2);
+            if (album != 0 && *album != 0)
+                musicpack_meter_add_frames(*album, buf, n / 2);
             total_frames += n / 2;
         }
         if (PCLOSE(pipe) != 0)
@@ -241,6 +256,67 @@ print_track(const musicpack_track *t)
                t->loudness.true_peak_db);
 }
 
+/* Medium format summary: "CD", "CD x 2", "CD + Digital". NULL when no medium
+   carries a format. */
+static const char *
+medium_format_display(const musicpack_manifest *m, char *buf, size_t cap)
+{
+    char seen[8][32];
+    size_t seen_count = 0, d, s;
+
+    for (d = 0; d < m->disc_count; d++) {
+        const char *f = m->discs[d].format;
+        int dup = 0;
+        if (f == 0)
+            continue;
+        for (s = 0; s < seen_count; s++)
+            if (strcmp(seen[s], f) == 0) { dup = 1; break; }
+        if (!dup && seen_count < sizeof seen / sizeof *seen)
+            snprintf(seen[seen_count++], sizeof seen[0], "%s", f);
+    }
+    if (seen_count == 0)
+        return 0;
+    if (seen_count == 1)
+        snprintf(buf, cap, "%s x %zu", seen[0], m->disc_count);
+    else {
+        size_t n = 0;
+        buf[0] = '\0';
+        for (s = 0; s < seen_count; s++) {
+            int k = snprintf(buf + n, cap - n, "%s%s", s > 0 ? " + " : "", seen[s]);
+            if (k < 0 || (size_t) k >= cap - n)
+                break;
+            n += (size_t) k;
+        }
+    }
+    return buf;
+}
+
+/* Dominant codec across the package: single display name when all tracks
+   share a codec, NULL otherwise (unknown or mixed). */
+static const char *
+package_codec(const musicpack_manifest *m)
+{
+    size_t d, t, n = 0;
+    const char *first = 0;
+
+    for (d = 0; d < m->disc_count; d++)
+        for (t = 0; t < m->discs[d].track_count; t++) {
+            const char *c = codec_for_path(m->discs[d].tracks[t].audio.path);
+            if (n == 0)
+                first = c;
+            else if (strcmp(first, c) != 0)
+                return 0;
+            n++;
+        }
+    if (n == 0 || first == 0)
+        return 0;
+    if (strcmp(first, "musepack") == 0) return "Musepack SV8";
+    if (strcmp(first, "flac") == 0) return "FLAC";
+    if (strcmp(first, "wav") == 0) return "WAV";
+    if (strcmp(first, "ogg") == 0) return "Ogg Vorbis";
+    return first;
+}
+
 static int
 cmd_info(const char *dir)
 {
@@ -265,15 +341,37 @@ cmd_info(const char *dir)
         else
             printf("Artist: %s\n", m->album_artists[i].name);
     }
-    if (m->release_date != 0)
-        printf("Release date: %s\n", m->release_date);
+    if (m->release_type != 0)
+        printf("Type: %s\n", m->release_type);
+    if (m->release.edition != 0)
+        printf("Edition: %s\n", m->release.edition);
+    if (m->release.release_date != 0)
+        printf("Release date: %s\n", m->release.release_date);
+    if (m->original_release_date != 0)
+        printf("Original release: %s\n", m->original_release_date);
+    if (m->release.country != 0)
+        printf("Country: %s\n", m->release.country);
+    if (m->release.label != 0)
+        printf("Label: %s\n", m->release.label);
+    if (m->release.catalogue_number != 0)
+        printf("Catalogue: %s\n", m->release.catalogue_number);
+    {
+        char buf[128];
+        const char *fmt = medium_format_display(m, buf, sizeof buf);
+        if (fmt != 0)
+            printf("Medium: %s\n", fmt);
+    }
+    if (m->barcode != 0)
+        printf("Barcode: %s\n", m->barcode);
+    if (m->identity_source != 0 || m->identity_confidence != 0)
+        printf("Identity: %s%s%s\n",
+               m->identity_source != 0 ? m->identity_source : "unknown",
+               m->identity_confidence != 0 ? " " : "",
+               m->identity_confidence != 0 ? m->identity_confidence : "");
+    if (m->musicbrainz_release_group_id != 0)
+        printf("MusicBrainz release group: %s\n", m->musicbrainz_release_group_id);
     if (m->musicbrainz_release_id != 0)
-        printf("MusicBrainz: %s", m->musicbrainz_release_id);
-    if (m->identity_confidence != 0)
-        printf(" [%s%s]", m->identity_source != 0 ? m->identity_source : "identity",
-               m->identity_confidence);
-    if (m->musicbrainz_release_id != 0)
-        printf("\n");
+        printf("MusicBrainz release: %s\n", m->musicbrainz_release_id);
     if (m->source_type != 0 || m->source_store != 0)
         printf("Source: %s%s%s%s\n",
                m->source_type != 0 ? m->source_type : "unknown",
@@ -286,6 +384,11 @@ cmd_info(const char *dir)
             printf(" %s", m->genres[i]);
         printf("\n");
     }
+    {
+        const char *codec = package_codec(m);
+        if (codec != 0)
+            printf("Codec: %s\n", codec);
+    }
 
     printf("Discs: %zu\n", m->disc_count);
     for (d = 0; d < m->disc_count; d++) {
@@ -297,9 +400,13 @@ cmd_info(const char *dir)
     }
     printf("Total tracks: %zu\n", track_total);
 
-    if (m->has_album_loudness)
-        printf("Album loudness: %.1f LUFS, %.1f dBTP\n",
+    if (m->has_album_loudness) {
+        printf("Album loudness: %.1f LUFS, %.1f dBTP",
                m->album_loudness.lufs, m->album_loudness.true_peak_db);
+        if (m->loudness_algorithm != 0)
+            printf(" (%s)", m->loudness_algorithm);
+        printf("\n");
+    }
     if (m->provenance_tool != 0)
         printf("Provenance: %s %s\n", m->provenance_tool,
                m->provenance_tool_version != 0 ? m->provenance_tool_version : "");
@@ -357,27 +464,41 @@ usage_create(void)
 {
     fprintf(stderr,
         "usage: musicpack create -o <dir> -t TITLE [-a ARTIST]...\n"
-        "       [-d RELEASE_DATE] [-T FILE [-n TRACK_TITLE]]... [-A ARTWORK]\n");
+        "       [-d RELEASE_DATE] [-R RELEASE_TYPE] [-O ORIGINAL_RELEASE_DATE]\n"
+        "       [-e EDITION] [-l LABEL] [-c CATALOGUE] [-C COUNTRY]\n"
+        "       [-m MEDIUM_FORMAT] [-N NOTES] [-T FILE [-n TRACK_TITLE]]... [-A ARTWORK]\n");
 }
 
 static int
 cmd_create(int argc, char **argv)
 {
     const char *out_dir = 0, *title = 0, *release_date = 0, *artwork = 0;
+    const char *release_type = 0, *orig_release_date = 0, *edition = 0;
+    const char *label = 0, *catalogue = 0, *country = 0, *medium_format = 0;
+    const char *notes = 0;
     create_track tracks[256];
     char *artists[64];
     size_t artist_count = 0, track_count = 0;
+    musicpack_meter *album_meter = 0;
     int c;
 
     for (c = 0; c < (int) (sizeof tracks / sizeof *tracks); c++)
         memset(&tracks[c], 0, sizeof tracks[c]);
 
-    while ((c = getopt(argc, argv, "o:t:a:d:T:n:A:")) != -1) {
+    while ((c = getopt(argc, argv, "o:t:a:d:R:O:e:l:c:C:m:N:T:n:A:")) != -1) {
         switch (c) {
         case 'o': out_dir = optarg; break;
         case 't': title = optarg; break;
         case 'a': artists[artist_count++] = optarg; break;
         case 'd': release_date = optarg; break;
+        case 'R': release_type = optarg; break;
+        case 'O': orig_release_date = optarg; break;
+        case 'e': edition = optarg; break;
+        case 'l': label = optarg; break;
+        case 'c': catalogue = optarg; break;
+        case 'C': country = optarg; break;
+        case 'm': medium_format = optarg; break;
+        case 'N': notes = optarg; break;
         case 'T':
             if (track_count >= sizeof tracks / sizeof *tracks)
                 return usage_error("too many tracks");
@@ -418,13 +539,26 @@ cmd_create(int argc, char **argv)
             m.album_artists[i].name = strdup(artists[i]);
         }
         m.album_artist_count = artist_count;
-        if (release_date != 0)
-            m.release_date = strdup(release_date);
+        if (release_type != 0)
+            m.release_type = strdup(release_type);
+        if (orig_release_date != 0)
+            m.original_release_date = strdup(orig_release_date);
+        if (release_date != 0) {
+            m.release.present = 1;
+            m.release.release_date = strdup(release_date);
+        }
+        if (edition != 0) { m.release.present = 1; m.release.edition = strdup(edition); }
+        if (label != 0) { m.release.present = 1; m.release.label = strdup(label); }
+        if (catalogue != 0) { m.release.present = 1; m.release.catalogue_number = strdup(catalogue); }
+        if (country != 0) { m.release.present = 1; m.release.country = strdup(country); }
+        if (notes != 0) { m.release.present = 1; m.release.notes = strdup(notes); }
 
         m.discs = (musicpack_disc *) calloc(1, sizeof *m.discs);
         m.disc_count = 1;
         disc = &m.discs[0];
         disc->disc = 1;
+        if (medium_format != 0)
+            disc->format = strdup(medium_format);
         disc->tracks = (musicpack_track *) calloc(track_count, sizeof *disc->tracks);
         disc->track_count = track_count;
 
@@ -469,11 +603,12 @@ cmd_create(int argc, char **argv)
                 break;
             }
             t->audio.sha256 = strdup(hex);
-            /* duration + loudness (best effort) */
+            /* duration + loudness (best effort); also feeds the album meter */
             {
                 int has_l;
                 double lufs, peak, dur = 0;
-                if (measure_loudness(target, &has_l, &lufs, &peak, &dur) == 0) {
+                if (measure_loudness(target, &has_l, &lufs, &peak, &dur,
+                                     &album_meter) == 0) {
                     if (has_l) {
                         t->loudness.present = 1;
                         t->loudness.lufs = lufs;
@@ -505,6 +640,16 @@ cmd_create(int argc, char **argv)
             }
         }
 
+        if (!bad && album_meter != 0) {
+            double alufs, apeak;
+            if (musicpack_meter_result(album_meter, &alufs, &apeak) == MUSICPACK_OK) {
+                m.has_album_loudness = 1;
+                m.album_loudness.lufs = alufs;
+                m.album_loudness.true_peak_db = apeak;
+                m.loudness_algorithm = strdup(MUSICPACK_LOUDNESS_STANDARD);
+            }
+        }
+
         if (!bad) {
             char *json = 0;
             if (musicpack_manifest_write(&m, &json) == MUSICPACK_OK) {
@@ -523,7 +668,17 @@ cmd_create(int argc, char **argv)
             free(m.album_artists[i].name);
         free(m.album_artists);
         free(m.album_title);
-        free(m.release_date);
+        free(m.release_type);
+        free(m.original_release_date);
+        free(m.release.release_date);
+        free(m.release.edition);
+        free(m.release.country);
+        free(m.release.label);
+        free(m.release.catalogue_number);
+        free(m.release.notes);
+        free(disc->format);
+        free(m.loudness_algorithm);
+        musicpack_meter_free(album_meter);
         for (i = 0; i < disc->track_count; i++) {
             free(disc->tracks[i].title);
             free(disc->tracks[i].audio.path);
@@ -700,13 +855,19 @@ usage_import(void)
 {
     fprintf(stderr,
         "usage: musicpack import -o <dir> [options] <source-dir>\n"
-        "       options: -t TITLE  -a ARTIST  -L (skip loudness measurement)\n");
+        "       options: -t TITLE  -a ARTIST  -L (skip loudness measurement)\n"
+        "       release: -d RELEASE_DATE  -R RELEASE_TYPE  -O ORIGINAL_RELEASE_DATE\n"
+        "                -e EDITION  -l LABEL  -c CATALOGUE  -C COUNTRY\n"
+        "                -m MEDIUM_FORMAT  -N NOTES\n");
 }
 
 static int
 cmd_import(int argc, char **argv)
 {
     const char *src = 0, *out_dir = 0, *title = 0;
+    const char *release_date = 0, *release_type = 0, *orig_release_date = 0;
+    const char *edition = 0, *label = 0, *catalogue = 0, *country = 0;
+    const char *medium_format = 0, *notes = 0;
     char *artists[64];
     size_t artist_count = 0;
     int no_loudness = 0;
@@ -721,6 +882,7 @@ cmd_import(int argc, char **argv)
     char **extras_srcs = 0;
     size_t extras_count = 0, extras_cap = 0;
     musicpack_manifest m;
+    musicpack_meter *album_meter = 0;
     char audio_dir[MUSICPACK_PATH_MAX + 2];
     char art_dir[MUSICPACK_PATH_MAX + 2], lyr_dir[MUSICPACK_PATH_MAX + 2];
     char hex[MUSICPACK_SHA256_HEX_SIZE];
@@ -728,12 +890,21 @@ cmd_import(int argc, char **argv)
     size_t i;
     int bad = 0;
 
-    while ((c = getopt(argc, argv, "o:t:a:L")) != -1) {
+    while ((c = getopt(argc, argv, "o:t:a:L:d:R:O:e:l:c:C:m:N:")) != -1) {
         switch (c) {
         case 'o': out_dir = optarg; break;
         case 't': title = optarg; break;
         case 'a': artists[artist_count++] = optarg; break;
         case 'L': no_loudness = 1; break;
+        case 'd': release_date = optarg; break;
+        case 'R': release_type = optarg; break;
+        case 'O': orig_release_date = optarg; break;
+        case 'e': edition = optarg; break;
+        case 'l': label = optarg; break;
+        case 'c': catalogue = optarg; break;
+        case 'C': country = optarg; break;
+        case 'm': medium_format = optarg; break;
+        case 'N': notes = optarg; break;
         default: usage_import(); return 2;
         }
     }
@@ -862,6 +1033,19 @@ cmd_import(int argc, char **argv)
     for (i = 0; i < artist_count; i++)
         m.album_artists[i].name = strdup(artists[i]);
     m.album_artist_count = artist_count;
+    if (release_type != 0)
+        m.release_type = strdup(release_type);
+    if (orig_release_date != 0)
+        m.original_release_date = strdup(orig_release_date);
+    if (release_date != 0) {
+        m.release.present = 1;
+        m.release.release_date = strdup(release_date);
+    }
+    if (edition != 0) { m.release.present = 1; m.release.edition = strdup(edition); }
+    if (label != 0) { m.release.present = 1; m.release.label = strdup(label); }
+    if (catalogue != 0) { m.release.present = 1; m.release.catalogue_number = strdup(catalogue); }
+    if (country != 0) { m.release.present = 1; m.release.country = strdup(country); }
+    if (notes != 0) { m.release.present = 1; m.release.notes = strdup(notes); }
 
     snprintf(audio_dir, sizeof audio_dir, "%s/audio", out_dir);
     snprintf(art_dir, sizeof art_dir, "%s/artwork", out_dir);
@@ -895,6 +1079,8 @@ cmd_import(int argc, char **argv)
         }
         disc = &m.discs[it->disc - 1];
         disc->disc = it->disc;
+        if (disc->format == 0 && medium_format != 0)
+            disc->format = strdup(medium_format);
         disc->tracks = (musicpack_track *) realloc(disc->tracks,
                                                    (disc->track_count + 1) * sizeof *disc->tracks);
         t = &disc->tracks[disc->track_count];
@@ -920,7 +1106,8 @@ cmd_import(int argc, char **argv)
         if (!no_loudness) {
             int has_l;
             double lufs, peak, dur = 0;
-            if (measure_loudness(target, &has_l, &lufs, &peak, &dur) == 0 && has_l) {
+            if (measure_loudness(target, &has_l, &lufs, &peak, &dur,
+                                 &album_meter) == 0 && has_l) {
                 t->loudness.present = 1;
                 t->loudness.lufs = lufs;
                 t->loudness.true_peak_db = peak;
@@ -1019,6 +1206,16 @@ cmd_import(int argc, char **argv)
         }
     }
 
+    if (!no_loudness && album_meter != 0) {
+        double alufs, apeak;
+        if (musicpack_meter_result(album_meter, &alufs, &apeak) == MUSICPACK_OK) {
+            m.has_album_loudness = 1;
+            m.album_loudness.lufs = alufs;
+            m.album_loudness.true_peak_db = apeak;
+            m.loudness_algorithm = strdup(MUSICPACK_LOUDNESS_STANDARD);
+        }
+    }
+
     if (!bad) {
         char *json = 0;
         if (musicpack_manifest_write(&m, &json) == MUSICPACK_OK) {
@@ -1034,6 +1231,7 @@ cmd_import(int argc, char **argv)
 
     /* free model */
     musicpack_manifest_clear(&m);
+    musicpack_meter_free(album_meter);
     for (i = 0; i < track_count; i++) {
         free(tracks[i].src_rel);
         free(tracks[i].title);

@@ -129,6 +129,50 @@ is_lower_hex(const char *s)
 }
 
 static int
+is_in_string_list(const char *s, const char *const *list, size_t n)
+{
+    size_t i;
+    if (s == 0)
+        return 0;
+    for (i = 0; i < n; i++)
+        if (strcmp(s, list[i]) == 0)
+            return 1;
+    return 0;
+}
+
+/* Closed enums: unknown values are rejected so `other` stays the escape
+   hatch. `album.releaseType` and `media[].format` are deliberately not free
+   strings. */
+static const char *const RELEASE_TYPES[] = {
+    "album", "ep", "single", "maxi-single", "compilation", "soundtrack",
+    "live-album", "remix-album", "box-set", "other"
+};
+
+static const char *const MEDIUM_FORMATS[] = {
+    "CD", "SACD", "Vinyl", "Cassette", "Digital", "Blu-ray Audio",
+    "DVD-Audio", "Other"
+};
+
+static int
+get_opt_enum(cJSON *obj, const char *key, char **field, const char *const *list,
+             size_t n, musicpack_status *status)
+{
+    cJSON *v = cJSON_GetObjectItemCaseSensitive(obj, key);
+    if (v == 0)
+        return 1;
+    if (!cJSON_IsString(v) || !is_in_string_list(v->valuestring, list, n)) {
+        *status = MUSICPACK_ERR_INVALID;
+        return 0;
+    }
+    *field = strdup(v->valuestring);
+    if (*field == 0) {
+        *status = MUSICPACK_ERR_NOMEM;
+        return 0;
+    }
+    return 1;
+}
+
+static int
 parse_asset(cJSON *o, musicpack_asset *a, musicpack_status *status)
 {
     *status = MUSICPACK_OK;
@@ -225,6 +269,10 @@ parse_track(cJSON *o, musicpack_track *t, musicpack_status *status)
     if (v != 0) {
         if (!get_opt_string(v, "isrc", &t->isrc, status))
             return 0;
+        if (!get_opt_string(v, "musicbrainzTrackId", &t->musicbrainz_track_id, status))
+            return 0;
+        if (!get_opt_string(v, "musicbrainzRecordingId", &t->musicbrainz_recording_id, status))
+            return 0;
     }
     v = cJSON_GetObjectItemCaseSensitive(o, "source");
     if (v != 0) {
@@ -268,6 +316,9 @@ parse_disc(cJSON *o, musicpack_disc *d, musicpack_status *status)
     if (!cJSON_IsObject(o))
         return 0;
     if (!get_req_int(o, "disc", &d->disc, status))
+        return 0;
+    if (!get_opt_enum(o, "format", &d->format,
+                      MEDIUM_FORMATS, sizeof MEDIUM_FORMATS / sizeof *MEDIUM_FORMATS, status))
         return 0;
     if (!get_opt_string(o, "title", &d->title, status))
         return 0;
@@ -352,7 +403,10 @@ musicpack_manifest_parse_tree(const cJSON *root, musicpack_manifest *m)
         if (!parse_artists(artists, &m->album_artists, &m->album_artist_count, &status))
             return status;
     }
-    if (!get_opt_string(v, "releaseDate", &m->release_date, &status))
+    if (!get_opt_enum(v, "releaseType", &m->release_type,
+                      RELEASE_TYPES, sizeof RELEASE_TYPES / sizeof *RELEASE_TYPES, &status))
+        return status;
+    if (!get_opt_string(v, "originalReleaseDate", &m->original_release_date, &status))
         return status;
     {
         cJSON *genres = cJSON_GetObjectItemCaseSensitive(v, "genres");
@@ -378,11 +432,36 @@ musicpack_manifest_parse_tree(const cJSON *root, musicpack_manifest *m)
         }
     }
 
+    /* release (specific release/edition) */
+    v = cJSON_GetObjectItemCaseSensitive(root, "release");
+    if (v != 0) {
+        if (!cJSON_IsObject(v))
+            return MUSICPACK_ERR_INVALID;
+        if (!get_opt_string(v, "releaseDate", &m->release.release_date, &status))
+            return status;
+        if (!get_opt_string(v, "edition", &m->release.edition, &status))
+            return status;
+        if (!get_opt_string(v, "country", &m->release.country, &status))
+            return status;
+        if (!get_opt_string(v, "label", &m->release.label, &status))
+            return status;
+        if (!get_opt_string(v, "catalogueNumber", &m->release.catalogue_number, &status))
+            return status;
+        if (!get_opt_string(v, "notes", &m->release.notes, &status))
+            return status;
+        if (m->release.release_date != 0 || m->release.edition != 0 ||
+            m->release.country != 0 || m->release.label != 0 ||
+            m->release.catalogue_number != 0 || m->release.notes != 0)
+            m->release.present = 1;
+    }
+
     /* identifiers + identity */
     v = cJSON_GetObjectItemCaseSensitive(root, "identifiers");
     if (v != 0) {
         if (!cJSON_IsObject(v))
             return MUSICPACK_ERR_INVALID;
+        if (!get_opt_string(v, "musicbrainzReleaseGroupId", &m->musicbrainz_release_group_id, &status))
+            return status;
         if (!get_opt_string(v, "musicbrainzReleaseId", &m->musicbrainz_release_id, &status))
             return status;
         if (!get_opt_string(v, "barcode", &m->barcode, &status))
@@ -489,6 +568,8 @@ musicpack_manifest_parse_tree(const cJSON *root, musicpack_manifest *m)
         int have_lufs = 0, have_peak = 0;
         if (!cJSON_IsObject(v))
             return MUSICPACK_ERR_INVALID;
+        if (!get_opt_string(v, "algorithm", &m->loudness_algorithm, &status))
+            return status;
         if (!get_opt_double(v, "albumLUFS", &have_lufs, &m->album_loudness.lufs,
                             musicpack_loudness_validate_lufs, &status))
             return status;
@@ -571,10 +652,18 @@ musicpack_manifest_clear(musicpack_manifest *m)
         free(m->album_artists[i].role);
     }
     free(m->album_artists);
-    free(m->release_date);
+    free(m->release_type);
+    free(m->original_release_date);
     for (i = 0; i < m->genre_count; i++)
         free(m->genres[i]);
     free(m->genres);
+    free(m->release.release_date);
+    free(m->release.edition);
+    free(m->release.country);
+    free(m->release.label);
+    free(m->release.catalogue_number);
+    free(m->release.notes);
+    free(m->musicbrainz_release_group_id);
     free(m->musicbrainz_release_id);
     free(m->barcode);
     free(m->identity_source);
@@ -582,10 +671,12 @@ musicpack_manifest_clear(musicpack_manifest *m)
     free(m->source_type);
     free(m->source_store);
     free(m->source_id);
+    free(m->loudness_algorithm);
 
     for (i = 0; i < m->disc_count; i++) {
         musicpack_disc *d = &m->discs[i];
         size_t t;
+        free(d->format);
         free(d->title);
         for (t = 0; t < d->track_count; t++) {
             musicpack_track *tr = &d->tracks[t];
@@ -597,6 +688,8 @@ musicpack_manifest_clear(musicpack_manifest *m)
             }
             free(tr->artists);
             free(tr->isrc);
+            free(tr->musicbrainz_track_id);
+            free(tr->musicbrainz_recording_id);
             free(tr->source_store);
             free(tr->source_track_id);
             free(tr->source_audio_codec);
@@ -677,16 +770,36 @@ build_tree(const musicpack_manifest *m)
     o = cJSON_AddObjectToObject(root, "album");
     cJSON_AddStringToObject(o, "title", m->album_title);
     cJSON_AddItemToObject(o, "artists", artists_to_json(m->album_artists, m->album_artist_count));
-    if (m->release_date != 0)
-        cJSON_AddStringToObject(o, "releaseDate", m->release_date);
+    if (m->release_type != 0)
+        cJSON_AddStringToObject(o, "releaseType", m->release_type);
+    if (m->original_release_date != 0)
+        cJSON_AddStringToObject(o, "originalReleaseDate", m->original_release_date);
     if (m->genre_count > 0) {
         cJSON *g = cJSON_AddArrayToObject(o, "genres");
         for (i = 0; i < m->genre_count; i++)
             cJSON_AddItemToArray(g, cJSON_CreateString(m->genres[i]));
     }
 
-    if (m->musicbrainz_release_id != 0 || m->barcode != 0) {
+    if (m->release.present) {
+        o = cJSON_AddObjectToObject(root, "release");
+        if (m->release.release_date != 0)
+            cJSON_AddStringToObject(o, "releaseDate", m->release.release_date);
+        if (m->release.edition != 0)
+            cJSON_AddStringToObject(o, "edition", m->release.edition);
+        if (m->release.country != 0)
+            cJSON_AddStringToObject(o, "country", m->release.country);
+        if (m->release.label != 0)
+            cJSON_AddStringToObject(o, "label", m->release.label);
+        if (m->release.catalogue_number != 0)
+            cJSON_AddStringToObject(o, "catalogueNumber", m->release.catalogue_number);
+        if (m->release.notes != 0)
+            cJSON_AddStringToObject(o, "notes", m->release.notes);
+    }
+
+    if (m->musicbrainz_release_group_id != 0 || m->musicbrainz_release_id != 0 || m->barcode != 0) {
         o = cJSON_AddObjectToObject(root, "identifiers");
+        if (m->musicbrainz_release_group_id != 0)
+            cJSON_AddStringToObject(o, "musicbrainzReleaseGroupId", m->musicbrainz_release_group_id);
         if (m->musicbrainz_release_id != 0)
             cJSON_AddStringToObject(o, "musicbrainzReleaseId", m->musicbrainz_release_id);
         if (m->barcode != 0)
@@ -715,6 +828,8 @@ build_tree(const musicpack_manifest *m)
         size_t t;
         o = cJSON_CreateObject();
         cJSON_AddNumberToObject(o, "disc", d->disc);
+        if (d->format != 0)
+            cJSON_AddStringToObject(o, "format", d->format);
         if (d->title != 0)
             cJSON_AddStringToObject(o, "title", d->title);
         item = cJSON_AddArrayToObject(o, "tracks");
@@ -726,9 +841,15 @@ build_tree(const musicpack_manifest *m)
             if (tr->artist_count > 0)
                 cJSON_AddItemToObject(to, "artists",
                                       artists_to_json(tr->artists, tr->artist_count));
-            if (tr->isrc != 0) {
+            if (tr->isrc != 0 || tr->musicbrainz_track_id != 0 ||
+                tr->musicbrainz_recording_id != 0) {
                 cJSON *id = cJSON_AddObjectToObject(to, "identifiers");
-                cJSON_AddStringToObject(id, "isrc", tr->isrc);
+                if (tr->isrc != 0)
+                    cJSON_AddStringToObject(id, "isrc", tr->isrc);
+                if (tr->musicbrainz_track_id != 0)
+                    cJSON_AddStringToObject(id, "musicbrainzTrackId", tr->musicbrainz_track_id);
+                if (tr->musicbrainz_recording_id != 0)
+                    cJSON_AddStringToObject(id, "musicbrainzRecordingId", tr->musicbrainz_recording_id);
             }
             if (tr->source_store != 0 || tr->source_track_id != 0) {
                 cJSON *src = cJSON_AddObjectToObject(to, "source");
@@ -781,6 +902,8 @@ build_tree(const musicpack_manifest *m)
 
     if (m->has_album_loudness) {
         o = cJSON_AddObjectToObject(root, "loudness");
+        if (m->loudness_algorithm != 0)
+            cJSON_AddStringToObject(o, "algorithm", m->loudness_algorithm);
         cJSON_AddNumberToObject(o, "albumLUFS", m->album_loudness.lufs);
         cJSON_AddNumberToObject(o, "albumTruePeakDbTP", m->album_loudness.true_peak_db);
     }

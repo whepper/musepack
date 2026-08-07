@@ -166,6 +166,7 @@ test_unknown_field_roundtrip(void)
         "{\"format\":\"musicpack\",\"version\":1,"
         "\"xFutureField\":{\"note\":\"survives\"},"
         "\"album\":{\"title\":\"R\",\"artists\":[{\"name\":\"A\"}]},"
+        "\"release\":{\"edition\":\"Original\",\"xReleaseExt\":\"keep me\"},"
         "\"media\":[{\"disc\":1,\"tracks\":[{"
         "\"track\":1,\"title\":\"T\","
         "\"xTrackExt\":\"keep me\","
@@ -199,7 +200,9 @@ test_unknown_field_roundtrip(void)
     }
     CHECK(strstr(readback, "xFutureField") != 0, "unknown top-level field preserved");
     CHECK(strstr(readback, "xTrackExt") != 0, "unknown track field preserved");
+    CHECK(strstr(readback, "xReleaseExt") != 0, "unknown release field preserved");
     CHECK(strstr(readback, "survives") != 0, "unknown nested value preserved");
+    CHECK(strstr(readback, "keep me") != 0, "unknown release value preserved");
 
     free(readback);
     free(json);
@@ -358,6 +361,326 @@ test_meter(void)
 }
 
 /* ------------------------------------------------------------------ */
+/* release / edition model                                             */
+/* ------------------------------------------------------------------ */
+
+#define HASH_AAA "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+static const char *RELEASE_MANIFEST =
+    "{"
+    "  \"format\": \"musicpack\","
+    "  \"version\": 1,"
+    "  \"album\": {"
+    "    \"title\": \"Discovery\","
+    "    \"artists\": [ {\"name\": \"Daft Punk\", \"role\": \"main\"} ],"
+    "    \"releaseType\": \"album\","
+    "    \"originalReleaseDate\": \"2001-03-12\""
+    "  },"
+    "  \"release\": {"
+    "    \"releaseDate\": \"2001-03-12\","
+    "    \"edition\": \"2001 original release\","
+    "    \"country\": \"Europe\","
+    "    \"label\": \"Virgin\","
+    "    \"catalogueNumber\": \"8496062\","
+    "    \"notes\": \"Original mastering.\""
+    "  },"
+    "  \"identifiers\": {"
+    "    \"musicbrainzReleaseGroupId\": \"rg-2001\","
+    "    \"musicbrainzReleaseId\": \"rel-2001\","
+    "    \"barcode\": \"724384960620\""
+    "  },"
+    "  \"media\": [ {"
+    "    \"disc\": 1,"
+    "    \"format\": \"CD\","
+    "    \"tracks\": [ {"
+    "      \"track\": 1,"
+    "      \"title\": \"One More Time\","
+    "      \"identifiers\": { \"isrc\": \"FRZ010100201\","
+    "                          \"musicbrainzTrackId\": \"trk-2001\","
+    "                          \"musicbrainzRecordingId\": \"rec-2001\" },"
+    "      \"audio\": { \"path\": \"audio/01 - One More Time.mpc\", \"sha256\": \""
+    HASH_AAA "\" }"
+    "    } ]"
+    "  } ]"
+    "}";
+
+/* The same album, but a different collectible release (1987 European CD). */
+static const char *EDITION_MANIFEST =
+    "{"
+    "  \"format\": \"musicpack\","
+    "  \"version\": 1,"
+    "  \"album\": {"
+    "    \"title\": \"Discovery\","
+    "    \"artists\": [ {\"name\": \"Daft Punk\", \"role\": \"main\"} ],"
+    "    \"releaseType\": \"album\","
+    "    \"originalReleaseDate\": \"2001-03-12\""
+    "  },"
+    "  \"release\": {"
+    "    \"releaseDate\": \"1987-11-02\","
+    "    \"edition\": \"1987 European CD\","
+    "    \"country\": \"DE\","
+    "    \"label\": \"Carrere\","
+    "    \"catalogueNumber\": \"CCS 1001\""
+    "  },"
+    "  \"identifiers\": {"
+    "    \"musicbrainzReleaseGroupId\": \"rg-2001\","
+    "    \"musicbrainzReleaseId\": \"rel-1987\""
+    "  },"
+    "  \"media\": [ {"
+    "    \"disc\": 1,"
+    "    \"format\": \"CD\","
+    "    \"tracks\": [ {"
+    "      \"track\": 1,"
+    "      \"title\": \"One More Time\","
+    "      \"audio\": { \"path\": \"audio/01 - One More Time.mpc\", \"sha256\": \""
+    HASH_AAA "\" }"
+    "    } ]"
+    "  } ]"
+    "}";
+
+static void
+test_release_model(void)
+{
+    musicpack_manifest *m;
+    musicpack_status s;
+
+    m = musicpack_manifest_parse(RELEASE_MANIFEST, &s);
+    CHECK(m != 0, "release manifest parses");
+    if (m == 0)
+        return;
+    CHECK(strcmp(m->release_type, "album") == 0, "release type");
+    CHECK(strcmp(m->original_release_date, "2001-03-12") == 0, "original release date");
+    CHECK(m->release.present == 1, "release present");
+    CHECK(strcmp(m->release.release_date, "2001-03-12") == 0, "release date");
+    CHECK(strcmp(m->release.edition, "2001 original release") == 0, "edition");
+    CHECK(strcmp(m->release.country, "Europe") == 0, "country");
+    CHECK(strcmp(m->release.label, "Virgin") == 0, "label");
+    CHECK(strcmp(m->release.catalogue_number, "8496062") == 0, "catalogue number");
+    CHECK(strcmp(m->release.notes, "Original mastering.") == 0, "release notes");
+    CHECK(strcmp(m->musicbrainz_release_group_id, "rg-2001") == 0, "release group id");
+    CHECK(strcmp(m->musicbrainz_release_id, "rel-2001") == 0, "release id");
+    CHECK(strcmp(m->musicbrainz_release_group_id, m->musicbrainz_release_id) != 0,
+          "release-group vs release identity distinct");
+    CHECK(strcmp(m->barcode, "724384960620") == 0, "barcode");
+    CHECK(m->disc_count == 1 && strcmp(m->discs[0].format, "CD") == 0, "medium format");
+    CHECK(strcmp(m->discs[0].tracks[0].musicbrainz_track_id, "trk-2001") == 0,
+          "track id");
+    CHECK(strcmp(m->discs[0].tracks[0].musicbrainz_recording_id, "rec-2001") == 0,
+          "recording id");
+    musicpack_manifest_free(m);
+}
+
+static void
+test_release_invalid_enum(void)
+{
+    musicpack_status s;
+    char buf[2048];
+
+    snprintf(buf, sizeof buf,
+        "{\"format\":\"musicpack\",\"version\":1,"
+        "\"album\":{\"title\":\"T\",\"artists\":[{\"name\":\"A\"}],"
+        "\"releaseType\":\"mixtape\"},"
+        "\"media\":[{\"disc\":1,\"tracks\":[{"
+        "\"track\":1,\"title\":\"T\",\"audio\":{\"path\":\"a.mpc\",\"sha256\":\""
+        HASH_AAA "\"}}]}]}");
+    CHECK(musicpack_manifest_parse(buf, &s) == 0, "invalid release type rejected");
+
+    snprintf(buf, sizeof buf,
+        "{\"format\":\"musicpack\",\"version\":1,"
+        "\"album\":{\"title\":\"T\",\"artists\":[{\"name\":\"A\"}]},"
+        "\"media\":[{\"disc\":1,\"format\":\"DAT\",\"tracks\":[{"
+        "\"track\":1,\"title\":\"T\",\"audio\":{\"path\":\"a.mpc\",\"sha256\":\""
+        HASH_AAA "\"}}]}]}");
+    CHECK(musicpack_manifest_parse(buf, &s) == 0, "invalid medium format rejected");
+
+    snprintf(buf, sizeof buf,
+        "{\"format\":\"musicpack\",\"version\":1,"
+        "\"album\":{\"title\":\"T\",\"artists\":[{\"name\":\"A\"}]},"
+        "\"media\":[{\"disc\":1,\"format\":\"Digital\",\"tracks\":[{"
+        "\"track\":1,\"title\":\"T\",\"audio\":{\"path\":\"a.mpc\",\"sha256\":\""
+        HASH_AAA "\"}}]}]}");
+    CHECK(musicpack_manifest_parse(buf, &s) != 0, "digital single medium accepted");
+}
+
+static void
+test_missing_release_optional(void)
+{
+    musicpack_manifest *m;
+    musicpack_status s;
+
+    m = musicpack_manifest_parse(VALID_MANIFEST, &s);
+    CHECK(m != 0, "manifest without release parses");
+    if (m == 0)
+        return;
+    CHECK(m->release.present == 0, "release not present");
+    CHECK(m->release_type == 0, "release type absent");
+    CHECK(m->original_release_date == 0, "original release date absent");
+    CHECK(m->discs[0].format == 0, "medium format absent");
+    musicpack_manifest_free(m);
+}
+
+static void
+test_two_editions(void)
+{
+    musicpack_manifest *a, *b;
+    musicpack_status s;
+
+    a = musicpack_manifest_parse(RELEASE_MANIFEST, &s);
+    b = musicpack_manifest_parse(EDITION_MANIFEST, &s);
+    CHECK(a != 0 && b != 0, "two editions parse");
+    if (a == 0 || b == 0)
+        return;
+    CHECK(strcmp(a->album_title, b->album_title) == 0, "same album");
+    CHECK(strcmp(a->musicbrainz_release_group_id, b->musicbrainz_release_group_id) == 0,
+          "same release group");
+    CHECK(strcmp(a->release.edition, b->release.edition) != 0, "distinct editions");
+    CHECK(strcmp(a->release.release_date, b->release.release_date) != 0, "distinct dates");
+    CHECK(strcmp(a->musicbrainz_release_id, b->musicbrainz_release_id) != 0,
+          "distinct specific-release IDs");
+    CHECK(strcmp(a->release.label, b->release.label) != 0, "distinct labels");
+    musicpack_manifest_free(a);
+    musicpack_manifest_free(b);
+}
+
+/* ------------------------------------------------------------------ */
+/* album loudness must be a program measurement, not an aggregation    */
+/* ------------------------------------------------------------------ */
+
+static void
+fill_sine(float *buf, size_t frames, double amp)
+{
+    size_t i;
+    for (i = 0; i < frames; i++) {
+        float v = (float) (amp * sin(2.0 * M_PI * 1000.0 * (double) i / 44100.0));
+        buf[i * 2] = v;
+        buf[i * 2 + 1] = v;
+    }
+}
+
+static void
+test_album_loudness_aggregation(void)
+{
+    enum { RATE = 44100, TF = RATE * 3 }; /* 3s per track */
+    float *a = (float *) malloc(TF * 2 * sizeof(float));
+    float *b = (float *) malloc(TF * 2 * sizeof(float));
+    float *concat = (float *) malloc(TF * 4 * sizeof(float));
+    musicpack_meter *ma = 0, *mb = 0, *mab = 0, *mc = 0;
+    double la = 0, lb = 0, pa = 0, pb = 0;
+    double lab = 0, pab = 0, lc = 0, pc = 0;
+
+    if (a == 0 || b == 0 || concat == 0) {
+        CHECK(0, "alloc");
+        return;
+    }
+    fill_sine(a, TF, 1.0);    /* full-scale -> ~0 LUFS, ~0 dBTP */
+    fill_sine(b, TF, 0.25);   /* -12 dB -> ~-12 LUFS */
+    memcpy(concat, a, TF * 2 * sizeof(float));
+    memcpy(concat + TF * 2, b, TF * 2 * sizeof(float));
+
+    ma = musicpack_meter_new(2, RATE, 0);
+    musicpack_meter_add_frames(ma, a, TF);
+    musicpack_meter_result(ma, &la, &pa);
+    mb = musicpack_meter_new(2, RATE, 0);
+    musicpack_meter_add_frames(mb, b, TF);
+    musicpack_meter_result(mb, &lb, &pb);
+
+    /* album meter: feed track A then track B into ONE meter */
+    mab = musicpack_meter_new(2, RATE, 0);
+    musicpack_meter_add_frames(mab, a, TF);
+    musicpack_meter_add_frames(mab, b, TF);
+    musicpack_meter_result(mab, &lab, &pab);
+
+    /* reference: feed the concatenated program in one shot */
+    mc = musicpack_meter_new(2, RATE, 0);
+    musicpack_meter_add_frames(mc, concat, TF * 2);
+    musicpack_meter_result(mc, &lc, &pc);
+
+    CHECK(pa > pb, "track peaks differ (loud track louder)");
+    CHECK(fabs(lab - lc) < 0.01,
+          "album LUFS: sequential feeds == concatenated program");
+    CHECK(fabs(lab - (la + lb) / 2.0) > 0.5,
+          "album LUFS is NOT the arithmetic mean of track LUFS");
+    {
+        double mx = pa > pb ? pa : pb;
+        CHECK(fabs(pab - mx) < 0.01,
+              "album true peak == max of per-track true peaks");
+    }
+    CHECK(fabs(pab - pc) < 0.01, "album true peak identical across feed modes");
+
+    musicpack_meter_free(ma);
+    musicpack_meter_free(mb);
+    musicpack_meter_free(mab);
+    musicpack_meter_free(mc);
+    free(a);
+    free(b);
+    free(concat);
+}
+
+/* ------------------------------------------------------------------ */
+/* release metadata write round-trip                                   */
+/* ------------------------------------------------------------------ */
+
+static void
+test_release_roundtrip(void)
+{
+    musicpack_manifest m;
+    musicpack_manifest *back;
+    char *json = 0;
+    musicpack_status s;
+
+    memset(&m, 0, sizeof m);
+    m.album_title = strdup("RT");
+    m.album_artists = (musicpack_artist *) calloc(1, sizeof *m.album_artists);
+    m.album_artists[0].name = strdup("A");
+    m.album_artist_count = 1;
+    m.release_type = strdup("ep");
+    m.original_release_date = strdup("1992-05-01");
+    m.release.present = 1;
+    m.release.release_date = strdup("1992-05-01");
+    m.release.edition = strdup("1992 CD Maxi-Single");
+    m.release.country = strdup("GB");
+    m.release.label = strdup("Strike");
+    m.release.catalogue_number = strdup("STRIKE 1");
+    m.release.notes = strdup("12-track maxi-single.");
+    m.musicbrainz_release_group_id = strdup("rg-rt");
+    m.musicbrainz_release_id = strdup("rel-rt");
+    m.barcode = strdup("1234567890128");
+    m.discs = (musicpack_disc *) calloc(1, sizeof *m.discs);
+    m.disc_count = 1;
+    m.discs[0].disc = 1;
+    m.discs[0].format = strdup("Digital");
+    m.discs[0].tracks = (musicpack_track *) calloc(1, sizeof *m.discs[0].tracks);
+    m.discs[0].track_count = 1;
+    m.discs[0].tracks[0].number = 1;
+    m.discs[0].tracks[0].title = strdup("T1");
+    m.discs[0].tracks[0].isrc = strdup("GBXXX9200001");
+    m.discs[0].tracks[0].musicbrainz_track_id = strdup("trk-rt");
+    m.discs[0].tracks[0].musicbrainz_recording_id = strdup("rec-rt");
+    m.discs[0].tracks[0].audio.path = strdup("audio/01 - T1.mpc");
+    m.discs[0].tracks[0].audio.sha256 = strdup(HASH_AAA);
+
+    CHECK(musicpack_manifest_write(&m, &json) == MUSICPACK_OK, "write release manifest");
+    CHECK(json != 0 && strstr(json, "\"release\"") != 0, "release object written");
+    CHECK(json != 0 && strstr(json, "\"releaseType\"") != 0, "release type written");
+    CHECK(json != 0 && strstr(json, "\"originalReleaseDate\"") != 0, "original date written");
+    CHECK(json != 0 && strstr(json, "\"musicbrainzReleaseGroupId\"") != 0, "release group written");
+
+    back = musicpack_manifest_parse(json, &s);
+    CHECK(back != 0, "written manifest re-parses");
+    if (back != 0) {
+        CHECK(strcmp(back->release.edition, "1992 CD Maxi-Single") == 0, "edition round-trips");
+        CHECK(strcmp(back->discs[0].format, "Digital") == 0, "medium format round-trips");
+        CHECK(strcmp(back->discs[0].tracks[0].musicbrainz_recording_id, "rec-rt") == 0,
+              "recording id round-trips");
+        CHECK(strcmp(back->release_type, "ep") == 0, "release type round-trips");
+        musicpack_manifest_free(back);
+    }
+
+    musicpack_manifest_clear(&m);
+    free(json);
+}
+
+/* ------------------------------------------------------------------ */
 /* determinism                                                         */
 /* ------------------------------------------------------------------ */
 
@@ -470,6 +793,12 @@ int main(int argc, char **argv)
     test_unknown_field_roundtrip();
     test_multidisc();
     test_loudness_parse();
+    test_release_model();
+    test_release_invalid_enum();
+    test_missing_release_optional();
+    test_two_editions();
+    test_album_loudness_aggregation();
+    test_release_roundtrip();
     test_path_security();
     test_sha256();
     test_meter();
