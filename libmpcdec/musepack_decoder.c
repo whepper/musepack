@@ -62,19 +62,22 @@ static musepack_error
 decode_frame(musepack_decoder *d)
 {
     mpc_frame_info frame;
-    mpc_status s;
 
     frame.buffer = d->frame_buffer;
-    s = mpc_demux_decode(d->demux, &frame);
-    if (s != MPC_STATUS_OK)
-        return mpc_status_to_error(s);
-    if (frame.bits == -1)
-        return MUSEPACK_ERR_EOF;
-    if (frame.samples == 0)
-        return MUSEPACK_ERR_INVALID;
-    d->frame_samples = frame.samples;
-    d->frame_filled = 0;
-    return MUSEPACK_OK;
+    for (;;) {
+        mpc_status s = mpc_demux_decode(d->demux, &frame);
+        if (s != MPC_STATUS_OK)
+            return mpc_status_to_error(s);
+        if (frame.bits == -1)
+            return MUSEPACK_ERR_EOF;
+        if (frame.samples != 0) {
+            d->frame_samples = frame.samples;
+            d->frame_filled = 0;
+            return MUSEPACK_OK;
+        }
+        /* A zero-sample frame is a whole frame swallowed by the seek
+           skip (samples_to_skip); keep decoding to the audible data. */
+    }
 }
 
 musepack_decoder *
@@ -150,15 +153,19 @@ musepack_decoder_read(musepack_decoder *d, float *pcm, uint64_t max_frames,
 
     channels = d->si.channels;
     while (written < max_frames) {
-        while (d->frame_filled >= d->frame_samples) {
+        if (d->frame_filled >= d->frame_samples) {
             musepack_error e = decode_frame(d);
-            if (e == MUSEPACK_ERR_EOF) {
-                if (frames_out != 0)
-                    *frames_out = written;
-                return written != 0 ? MUSEPACK_OK : MUSEPACK_ERR_EOF;
-            }
-            if (e != MUSEPACK_OK)
+            if (e == MUSEPACK_ERR_EOF)
+                break;
+            if (e != MUSEPACK_OK) {
+                if (written != 0) {
+                    d->position += written;
+                    if (frames_out != 0)
+                        *frames_out = written;
+                    return MUSEPACK_OK;
+                }
                 return e;
+            }
         }
         {
             uint64_t avail = d->frame_samples - d->frame_filled;
@@ -172,7 +179,7 @@ musepack_decoder_read(musepack_decoder *d, float *pcm, uint64_t max_frames,
     d->position += written;
     if (frames_out != 0)
         *frames_out = written;
-    return MUSEPACK_OK;
+    return written != 0 ? MUSEPACK_OK : MUSEPACK_ERR_EOF;
 }
 
 musepack_error
@@ -213,7 +220,7 @@ musepack_decoder_length_samples(const musepack_decoder *d)
 {
     if (d == 0)
         return 0;
-    return (uint64_t) mpc_streaminfo_get_length_samples(&d->si);
+    return d->si.samples - d->si.beg_silence;
 }
 
 musepack_error
