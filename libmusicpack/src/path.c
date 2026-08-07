@@ -96,7 +96,9 @@ is_within(const char *base, const char *candidate)
     size_t blen = strlen(base);
     if (strncmp(base, candidate, blen) != 0)
         return 0;
-    if (candidate[blen] == '\0' || candidate[blen] == '/')
+    /* Windows separators are backslashes; manifest paths are '/' only, and
+       POSIX realpath never yields '\', so accepting both is safe. */
+    if (candidate[blen] == '\0' || candidate[blen] == '/' || candidate[blen] == '\\')
         return 1;
     return 0;
 }

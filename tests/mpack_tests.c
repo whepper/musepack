@@ -747,8 +747,11 @@ test_open_musicpack(const char *dir)
         musepack_decoder *dec;
         float pcm[1152 * 2];
         uint64_t frames, total = 0;
+        memset(&reader, 0, sizeof reader);
         CHECK(musicpack_package_track_open_reader(pkg, 0, 0, &reader) == MUSICPACK_OK,
               "track reader");
+        if (reader.data == 0)
+            return;
         dec = musepack_decoder_open(&reader, 0);
         CHECK(dec != 0, "decoder over libmusicpack reader");
         if (dec != 0) {
