@@ -33,9 +33,18 @@ LIB="$(cat "$TMP/libdir")"
 "$SERVER" scan --library "$LIB" --database "$TMP/lib.db" >/dev/null 2>&1 || {
     echo "FAIL scan"; exit 1; }
 
-# 3. serve (no startup scan; scan already done)
+# 2b. create an API token for the test client
+TOKEN="$("$SERVER" token create --name "CI" --database "$TMP/lib.db" 2>/dev/null \
+    | grep '^mpk_')"
+[ -n "$TOKEN" ] || { echo "FAIL token create"; exit 1; }
+
+# 3. serve (no startup scan; scan already done). --static-dir serves the
+#    reference demo (with COOP/COEP), --allow-origin exercises CORS.
 "$SERVER" serve --library "$LIB" --database "$TMP/lib.db" \
-    --listen 127.0.0.1 --port "$PORT" --no-scan >"$TMP/serve.log" 2>&1 &
+    --listen 127.0.0.1 --port "$PORT" --no-scan \
+    --static-dir "$ROOT/demo" \
+    --allow-origin http://localhost:5173 \
+    >"$TMP/serve.log" 2>&1 &
 PID=$!
 
 # 4. wait for readiness
@@ -52,7 +61,8 @@ if [ "$READY" != 1 ]; then
 fi
 
 # 5. run the API/streaming/security tests
-"$PY" "$ROOT/tests/server_api_test.py" run "http://127.0.0.1:$PORT" "$LIB"
+"$PY" "$ROOT/tests/server_api_test.py" run \
+    "http://127.0.0.1:$PORT" "$LIB" "$TOKEN" "$ROOT/demo"
 RC=$?
 if [ "$RC" -ne 0 ]; then
     echo "---- server log ----"

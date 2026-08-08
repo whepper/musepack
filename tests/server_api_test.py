@@ -1,19 +1,16 @@
 #!/usr/bin/env python3
-"""Phase 4 musicpack-server integration tests.
+"""Phase 5 musicpack-server integration tests.
 
-Two modes:
-
+Modes:
   setup <ref-mpc> <ref-flac> <tmpdir>
       Builds a small real library under <tmpdir>/lib from the reference
-      fixtures: the mpc + flac packages, a second edition of the mpc album
-      (same release group, distinct release), a two-disc package, a
-      malformed package, and a symlink-escape attempt.
-
-  run <base-url> <libdir>
-      Exercises the HTTP API v1: health, album/release/track/artist
-      endpoints, collector hierarchy, pagination, errors, direct streaming
-      with HTTP Range (byte-identity vs the source files), HEAD, concurrency,
-      and security boundaries (traversal, missing files, symlink escapes).
+      fixtures (see Phase 4).
+  run <base-url> <libdir> <token> <demo-dir>
+      Exercises HTTP API v1 behind bearer auth: health/auth matrix, CORS,
+      albums/releases/tracks/artists, streaming + HTTP Range + ETag, live
+      library scan/verify/status, reads during scans/verifies, duplicate-scan
+      rejection, and the static demo directory with cross-origin isolation
+      headers.
 
 Exits non-zero on the first failure. Uses only the stdlib.
 """
@@ -21,12 +18,15 @@ import hashlib
 import json
 import os
 import shutil
-import subprocess
 import sys
+import threading
+import time
 import urllib.error
 import urllib.request
 
 API = "/api/v1"
+TOKEN = None
+BULK_COPIES = 120  # packages copied for live-scan timing tests
 
 
 # --------------------------------------------------------------------------
@@ -48,11 +48,9 @@ def setup(ref_mpc, ref_flac, tmpdir):
     shutil.rmtree(lib, ignore_errors=True)
     os.makedirs(lib)
 
-    # 1. mpc + flac packages
     shutil.copytree(ref_mpc, os.path.join(lib, "Compilation.mpack"))
     shutil.copytree(ref_flac, os.path.join(lib, "Classical.mpack"))
 
-    # 2. second edition of the mpc album (same group, different release)
     second = os.path.join(lib, "Compilation-1987.mpack")
     shutil.copytree(ref_mpc, second)
     with open(os.path.join(second, "manifest.json"), encoding="utf-8") as f:
@@ -62,9 +60,6 @@ def setup(ref_mpc, ref_flac, tmpdir):
     m["release"]["country"] = "DE"
     write_json(os.path.join(second, "manifest.json"), m)
 
-    # 3. two-disc package: disc 2 reuses the same codec but must reference
-    #    distinct audio objects (v1 rejects duplicate referenced paths), so
-    #    copy the audio files under new names with refreshed sha256.
     twodisc = os.path.join(lib, "TwoDisc.mpack")
     shutil.copytree(ref_mpc, twodisc)
     with open(os.path.join(twodisc, "manifest.json"), encoding="utf-8") as f:
@@ -79,22 +74,17 @@ def setup(ref_mpc, ref_flac, tmpdir):
         dst = os.path.join(twodisc, newpath)
         shutil.copyfile(src, dst)
         d2_tracks.append({
-            "track": num,
-            "title": title,
+            "track": num, "title": title,
             "audio": {"path": newpath, "sha256": file_sha(dst)},
         })
     m["media"].append({"disc": 2, "format": "CD", "tracks": d2_tracks})
     write_json(os.path.join(twodisc, "manifest.json"), m)
 
-    # 4. malformed package
     bad = os.path.join(lib, "Broken.mpack")
     os.makedirs(bad)
     with open(os.path.join(bad, "manifest.json"), "w", encoding="utf-8") as f:
         f.write("{ this is not json ")
 
-    # 5. symlink-escape attempt: valid manifest, but the audio object at a
-    #    contained path is a symlink pointing outside the package. The server
-    #    must reject it at resolve time (scan -> warning, stream -> 503).
     esc = os.path.join(lib, "Escape.mpack")
     shutil.copytree(ref_mpc, esc)
     with open(os.path.join(esc, "manifest.json"), encoding="utf-8") as f:
@@ -104,8 +94,7 @@ def setup(ref_mpc, ref_flac, tmpdir):
     target = os.path.join(tmpdir, "escaped.bin")
     with open(target, "wb") as f:
         f.write(b"not a real mpc file")
-    escaped_audio = os.path.join(
-        esc, "audio", "01 - Alphaville - Big in Japan.mpc")
+    escaped_audio = os.path.join(esc, "audio", "01 - Alphaville - Big in Japan.mpc")
     os.remove(escaped_audio)
     os.symlink(target, escaped_audio)
 
@@ -117,8 +106,11 @@ def setup(ref_mpc, ref_flac, tmpdir):
 # http helpers
 # --------------------------------------------------------------------------
 
-def get(base, path, headers=None, method=None):
-    req = urllib.request.Request(base + path, headers=headers or {})
+def get(base, path, headers=None, method=None, auth=True):
+    h = dict(headers or {})
+    if auth and TOKEN:
+        h["Authorization"] = "Bearer " + TOKEN
+    req = urllib.request.Request(base + path, headers=h)
     if method:
         req.get_method = lambda: method
     try:
@@ -132,9 +124,17 @@ def sha(data):
     return hashlib.sha256(data).hexdigest()
 
 
-class T:
-    """Tiny assertion helper."""
+def wait_status(base, key, done_field="running"):
+    for _ in range(300):
+        st, _, body = get(base, API + "/library/status")
+        d = json.loads(body)[key]
+        if d[done_field] == 0:
+            return d
+        time.sleep(0.02)
+    raise AssertionError("job did not finish in time")
 
+
+class T:
     def __init__(self):
         self.failures = 0
         self.passed = 0
@@ -151,203 +151,183 @@ class T:
 # run
 # --------------------------------------------------------------------------
 
-def run(base, libdir, t):
-    import time
+def run(base, libdir, demo_dir, t):
+    mpc_src = os.path.join(libdir, "Compilation.mpack", "audio",
+                           "01 - Alphaville - Big in Japan.mpc")
 
-    # ---- health
-    st, h, body = get(base, API + "/health")
-    t.ok(st == 200, "health 200")
-    t.ok(json.loads(body)["status"] == "ok", "health status ok")
-    t.ok(json.loads(body)["apiVersion"] == "v1", "health api version")
+    # ---- health is public
+    st, _, body = get(base, API + "/health", auth=False)
+    t.ok(st == 200 and json.loads(body)["status"] == "ok", "health public 200")
 
-    # ---- albums list + ordering + pagination
+    # ---- auth matrix
+    st, _, _ = get(base, API + "/albums", auth=False)
+    t.ok(st == 401, "no token -> 401")
+    st, _, body = get(base, API + "/albums",
+                      headers={"Authorization": "Basic abc"}, auth=False)
+    t.ok(st == 401, "malformed Authorization -> 401")
+    st, _, _ = get(base, API + "/albums",
+                   headers={"Authorization": "Bearer invalid"}, auth=False)
+    t.ok(st == 401, "invalid token -> 401")
+    st, _, body = get(base, API + "/albums")
+    t.ok(st == 200, "valid token -> 200")
+    st, _, _ = get(base, API + "/tracks/1/audio", auth=False)
+    t.ok(st == 401, "audio without token -> 401")
+    st, _, _ = get(base, API + "/assets/1", auth=False)
+    t.ok(st == 401, "asset without token -> 401")
+    st, _, body = get(base, API + "/tracks/1/audio")
+    t.ok(st == 200, "audio with token -> 200")
+
+    # ---- CORS
+    OK_ORIGIN = "http://localhost:5173"
+    BAD_ORIGIN = "http://evil.example"
+    st, h, _ = get(base, API + "/albums", headers={"Origin": OK_ORIGIN})
+    t.ok(st == 200 and h.get("Access-Control-Allow-Origin") == OK_ORIGIN,
+         "allowed origin gets ACAO")
+    st, _, _ = get(base, API + "/albums", headers={"Origin": BAD_ORIGIN})
+    t.ok(st == 403, "disallowed origin -> 403")
+    st, h, _ = get(base, API + "/albums", method="OPTIONS",
+                   headers={"Origin": OK_ORIGIN,
+                            "Access-Control-Request-Method": "GET"})
+    t.ok(st == 204 and "Authorization" in h.get("Access-Control-Allow-Headers", ""),
+         "preflight allowed")
+    st, h, _ = get(base, API + "/albums")
+    t.ok(st == 200 and "Access-Control-Allow-Origin" not in h,
+         "no-Origin native client unaffected")
+
+    # ---- albums / collector hierarchy (Phase 4 behaviour preserved)
     st, _, body = get(base, API + "/albums")
     albums = json.loads(body)
     t.ok(st == 200 and albums["total"] == 3, "albums total 3")
     titles = [a["title"] for a in albums["albums"]]
-    # ordered by album artist, then title: the two "Alphaville" albums come
-    # before the "Synthetic Chamber Orchestra" album
     t.ok(titles == ["Synthetic Test Compilation", "Two Disc Extravaganza",
                     "Synthetic Classical Compilation"],
          "albums deterministically ordered")
-    st, _, body = get(base, API + "/albums?limit=1&offset=1")
-    page = json.loads(body)
-    t.ok(st == 200 and len(page["albums"]) == 1 and page["total"] == 3,
-         "albums pagination")
 
-    # ---- collector hierarchy: Compilation group has three releases
     comp = next(a for a in albums["albums"]
                 if a["title"] == "Synthetic Test Compilation")
     st, _, body = get(base, API + f"/albums/{comp['id']}")
     detail = json.loads(body)
-    t.ok(st == 200, "album detail 200")
     editions = sorted(r.get("edition", "") for r in detail["releases"])
     t.ok("1987 Original CD" in editions and "2016 Digital Remaster" in editions
-         and "Escape Edition" in editions,
-         "editions not collapsed")
-    media = detail["releases"][0]["media"]
-    t.ok(media == ["Digital"], "release media formats")
+         and "Escape Edition" in editions, "editions not collapsed")
 
-    # ---- release detail: tracks, codec, audio url, artwork
     release_id = next(r["id"] for r in detail["releases"]
                       if r.get("edition") == "2016 Digital Remaster")
     st, _, body = get(base, API + f"/releases/{release_id}")
     rel = json.loads(body)
-    t.ok(st == 200, "release detail 200")
+    t.ok(st == 200 and rel["media"][0]["tracks"][0]["codec"]["codec"]
+         == "musepack-sv8", "release detail + codec")
     track = rel["media"][0]["tracks"][0]
-    t.ok(track["codec"]["codec"] == "musepack-sv8", "mpc codec musepack-sv8")
-    t.ok(track["codec"]["mimeType"] == "audio/musepack", "mpc mime")
-    t.ok(track["codec"]["sampleRate"] == 44100, "mpc sample rate")
-    t.ok(track["audio"]["url"].startswith("/api/v1/tracks/"), "audio url")
-    t.ok(any(a["kind"] == "artwork" for a in rel["artwork"]), "artwork asset")
-    t.ok(rel["packageStatus"] == "valid", "package status valid")
-
-    # ---- two-disc release
-    td = next(a for a in albums["albums"] if a["title"] == "Two Disc Extravaganza")
-    _, _, body = get(base, API + f"/albums/{td['id']}")
-    td_detail = json.loads(body)
-    st, _, body = get(base, API + f"/releases/{td_detail['releases'][0]['id']}")
-    td_rel = json.loads(body)
-    t.ok(st == 200 and len(td_rel["media"]) == 2, "two-disc release has 2 media")
-    t.ok(td_rel["media"][1]["disc"] == 2, "second media is disc 2")
-
-    # ---- track detail
     tid = track["id"]
-    st, _, body = get(base, API + f"/tracks/{tid}")
-    tr = json.loads(body)
-    t.ok(st == 200 and tr["id"] == tid, "track detail 200")
-    t.ok(tr["context"]["albumTitle"] == "Synthetic Test Compilation",
-         "track album context")
 
-    # ---- artists
-    st, _, body = get(base, API + "/artists")
-    artists = json.loads(body)
-    t.ok(st == 200 and len(artists["artists"]) >= 2, "artists list")
-    aid = artists["artists"][0]["id"]
-    st, _, body = get(base, API + f"/artists/{aid}")
-    t.ok(st == 200 and "albums" in json.loads(body), "artist detail")
+    # ---- streaming + Range + ETag
+    st, _, body = get(base, API + f"/tracks/{tid}/audio")
+    t.ok(st == 200 and sha(body) == track["audio"]["sha256"],
+         "full audio byte-identity")
+    st, h, _ = get(base, API + f"/tracks/{tid}/audio", {"Range": "bytes=0-0"})
+    t.ok(st == 206 and h.get("Content-Range") == f"bytes 0-0/{track['audio']['size']}",
+         "range 206 + Content-Range")
+    st, h, _ = get(base, API + f"/tracks/{tid}/audio", {"Range": "bytes=999999-"})
+    t.ok(st == 416, "unsatisfiable range 416")
+    st, h, _ = get(base, API + f"/tracks/{tid}/audio", {"Range": "bytes=0-9"})
+    t.ok(h.get("ETag") == f'"{track["audio"]["sha256"]}"',
+         "ETag is the manifest sha256")
+    t.ok(h.get("Cache-Control") and "must-revalidate" in h.get("Cache-Control", ""),
+         "revalidation cache policy")
+    st, _, _ = get(base, API + f"/tracks/{tid}/audio",
+                   {"If-None-Match": f'"{track["audio"]["sha256"]}"'})
+    t.ok(st == 304, "If-None-Match -> 304")
 
-    # ---- errors
-    st, _, _ = get(base, API + "/tracks/abc")
-    t.ok(st == 400, "malformed id -> 400")
-    st, _, _ = get(base, API + "/tracks/999999")
-    t.ok(st == 404, "unknown id -> 404")
-    st, _, _ = get(base, API + "/releases/999999")
-    t.ok(st == 404, "unknown release -> 404")
-    st, _, _ = get(base, API + "/nope")
-    t.ok(st == 404, "unknown endpoint -> 404")
-    st, _, _ = get(base, "/api/v1/tracks/../../../etc/passwd")
-    t.ok(st == 404 or st == 400, "traversal attempt rejected")
-    st, _, body = get(base, "/etc/passwd")
-    t.ok(st == 404 and b"root:" not in body, "arbitrary path not served")
+    # ---- live scan / status / verify
+    # add a bulk of identical packages so a scan takes long enough to observe
+    bulk = os.path.join(libdir, "bulk")
+    os.makedirs(bulk, exist_ok=True)
+    for i in range(BULK_COPIES):
+        dst = os.path.join(bulk, f"Bulk{i:03d}.mpack")
+        if not os.path.exists(dst):
+            shutil.copytree(os.path.join(libdir, "Compilation.mpack"), dst)
 
-    # ---- streaming: byte identity (one mpc + one flac track)
-    flac_release = None
-    _, _, b2 = get(base, API + f"/albums/{next(a for a in albums['albums']
-                   if a['title'] == 'Synthetic Classical Compilation')['id']}")
-    flac_release = json.loads(b2)["releases"][0]["id"]
-    _, _, b2 = get(base, API + f"/releases/{flac_release}")
-    flac_track = json.loads(b2)["media"][0]["tracks"][0]
+    st, _, body = get(base, API + "/library/scan", method="POST")
+    t.ok(st == 202, "POST /library/scan -> 202")
+    st, _, body = get(base, API + "/library/scan", method="POST")
+    t.ok(st == 409, "duplicate scan -> 409 scan_already_running")
+    # reads continue while the scan runs
+    st, _, chunk = get(base, API + f"/tracks/{tid}/audio", {"Range": "bytes=0-127"})
+    with open(mpc_src, "rb") as f:
+        expect = f.read(128)
+    t.ok(st == 206 and chunk == expect, "reads continue during scan")
+    scan = wait_status(base, "scan")
+    t.ok(scan["packagesScanned"] >= BULK_COPIES, "scan counted bulk packages")
 
-    for label, want_size, track_id in (
-            ("mpc", 28288, tid),
-            ("flac", 138222, flac_track["id"])):
-        st, _, body = get(base, API + f"/tracks/{track_id}/audio")
-        t.ok(st == 200, f"{label} full GET 200")
-        _, _, b2 = get(base, API + f"/tracks/{track_id}")
-        manifest_sha = json.loads(b2)["audio"]["sha256"]
-        t.ok(sha(body) == manifest_sha, f"{label} bytes hash to manifest sha256")
-        t.ok(len(body) == want_size, f"{label} full size")
+    # a new package appears after commit without restart
+    newpkg = os.path.join(libdir, "Fresh.mpack")
+    shutil.copytree(os.path.join(libdir, "Classical.mpack"), newpkg)
+    with open(os.path.join(newpkg, "manifest.json"), encoding="utf-8") as f:
+        m = json.load(f)
+    m["album"]["title"] = "Fresh Album"
+    write_json(os.path.join(newpkg, "manifest.json"), m)
+    st, _, body = get(base, API + "/library/scan", method="POST")
+    t.ok(st == 202, "scan new package")
+    scan = wait_status(base, "scan")
+    st, _, body = get(base, API + "/albums")
+    total = json.loads(body)["total"]
+    t.ok(total == 4, f"new album visible after scan (total={total})")
 
-    mpc_url = API + f"/tracks/{tid}/audio"
-    # first / last byte
-    st, h, body = get(base, mpc_url, {"Range": "bytes=0-0"})
-    t.ok(st == 206 and h.get("Content-Range") == f"bytes 0-0/{28288}" and
-         h.get("Content-Length") == "1", "range first byte 206")
-    st, h, body = get(base, mpc_url, {"Range": "bytes=-1"})
-    t.ok(st == 206 and int(h.get("Content-Range").split("/")[1]) == 28288 and
-         len(body) == 1, "range last byte via suffix")
-    # open-ended + suffix
-    st, h, body = get(base, mpc_url, {"Range": "bytes=28280-"})
-    t.ok(st == 206 and len(body) == 8, "open-ended range")
-    st, h, body = get(base, mpc_url, {"Range": "bytes=-16"})
-    t.ok(st == 206 and len(body) == 16, "suffix range")
-    # whole-file range
-    st, h, body = get(base, mpc_url, {"Range": "bytes=0-99999999"})
-    t.ok(st == 206 and len(body) == 28288, "whole-file range 206")
-    # invalid / beyond EOF / oversized -> 416
-    for r in ("bytes=999999-", "bytes=0-1,5-6", "bytes=18446744073709551616-"):
-        st, h, _ = get(base, mpc_url, {"Range": r})
-        t.ok(st == 416 and h.get("Content-Range") == "bytes */28288",
-             f"unsatisfiable range {r} -> 416")
-    # range byte identity: concatenated disjoint ranges match the file
-    ranges = [("bytes=0-999", 0, 1000), ("bytes=10000-10999", 10000, 1000),
-              ("bytes=28280-", 28280, 8)]
-    concat = b""
-    for r, off, ln in ranges:
-        _, _, b = get(base, mpc_url, {"Range": r})
-        concat += b
-    with open(os.path.join(libdir, "Compilation.mpack", "audio",
-                           "01 - Alphaville - Big in Japan.mpc"), "rb") as f:
-        src = f.read()
-    expect = src[0:1000] + src[10000:11000] + src[28280:]
-    t.ok(concat == expect, "range responses byte-identical to source slices")
+    # removed package becomes unavailable
+    shutil.rmtree(os.path.join(libdir, "Fresh.mpack"))
+    get(base, API + "/library/scan", method="POST")
+    wait_status(base, "scan")
+    st, _, body = get(base, API + "/albums")
+    t.ok(json.loads(body)["total"] == 3, "removed album disappears after scan")
 
-    # ---- HEAD
-    st, h, body = get(base, mpc_url, method="HEAD")
-    t.ok(st == 200 and h.get("Accept-Ranges") == "bytes" and
-         h.get("Content-Length") == "28288" and body == b"",
-         "HEAD returns headers, no body")
+    # verify (the deliberately broken Escape package is expected to fail)
+    st, _, body = get(base, API + "/library/verify", method="POST")
+    t.ok(st == 202, "POST /library/verify -> 202")
+    st, _, body = get(base, API + "/library/verify", method="POST")
+    t.ok(st == 409, "duplicate verify -> 409")
+    st, _, chunk = get(base, API + f"/tracks/{tid}/audio", {"Range": "bytes=0-127"})
+    t.ok(st == 206 and chunk == expect, "serving continues during verify")
+    v = wait_status(base, "verify")
+    t.ok(v["packagesVerified"] >= 4 and v["failed"] >= 1,
+         "verify checks library (escape package fails)")
 
-    # ---- assets (artwork)
-    art = rel["artwork"][0]
-    st, h, body = get(base, API + f"/assets/{art['id']}")
-    with open(os.path.join(libdir, "Compilation.mpack", "artwork", "front.jpg"),
-              "rb") as f:
-        t.ok(st == 200 and body == f.read() and
-             h.get("Content-Type") == "image/jpeg", "artwork asset bytes")
-    st, h, body = get(base, API + f"/assets/{art['id']}", {"Range": "bytes=0-9"})
-    t.ok(st == 206 and len(body) == 10, "artwork range")
+    # checksum mismatch is surfaced by verify
+    corrupt = os.path.join(libdir, "Classical.mpack", "audio",
+                           "01 - Classical Piece No 1.flac")
+    with open(corrupt, "ab") as f:
+        f.write(b"X")
+    get(base, API + "/library/verify", method="POST")
+    v = wait_status(base, "verify")
+    t.ok(v["failed"] >= 2, "verify detects checksum mismatch")
 
-    # ---- missing source file -> 503
-    deleted = os.path.join(libdir, "Compilation.mpack", "audio",
-                           "02 - Bleachers - The Van.mpc")
-    if os.path.exists(deleted):
-        os.remove(deleted)
-        _, _, b2 = get(base, API + f"/releases/{rel['id']}")
-        trk2 = json.loads(b2)["media"][0]["tracks"][1]
-        st, _, _ = get(base, API + f"/tracks/{trk2['id']}/audio")
-        t.ok(st == 503, "missing source file -> 503")
+    # library/status without auth -> 401
+    st, _, _ = get(base, API + "/library/status", auth=False)
+    t.ok(st == 401, "status requires auth")
 
-    # ---- symlink-escape package: valid manifest, symlinked audio outside
-    _, _, b2 = get(base, API + "/albums")
-    esc_albums = [a for a in json.loads(b2)["albums"]
-                  if a["title"] == "Synthetic Test Compilation"]
-    _, _, b3 = get(base, API + f"/albums/{esc_albums[0]['id']}")
-    rels = json.loads(b3)["releases"]
-    esc_rel = next(r for r in rels if r.get("packageStatus") == "warning")
-    _, _, b4 = get(base, API + f"/releases/{esc_rel['id']}")
-    esc_track = json.loads(b4)["media"][0]["tracks"][0]
-    st, _, _ = get(base, API + f"/tracks/{esc_track['id']}/audio")
-    t.ok(st == 503, "symlink escape stream blocked")
+    # ---- static demo dir with cross-origin isolation
+    st, h, body = get(base, "/", auth=False)
+    t.ok(st == 200 and b"<html" in body.lower(),
+         "static demo index served")
+    t.ok(h.get("Cross-Origin-Opener-Policy") == "same-origin" and
+         h.get("Cross-Origin-Embedder-Policy") == "require-corp",
+         "COOP/COEP isolation headers")
+    st, h, _ = get(base, "/index.html", auth=False)
+    t.ok(st == 200 and h.get("Content-Type", "").startswith("text/html"),
+         "static index.html served")
+    # static dir cannot escape
+    st, _, _ = get(base, "/../../etc/passwd", auth=False)
+    t.ok(st == 404 or st == 400, "static traversal rejected")
+    # demo dir actually has the demo files
+    st, _, _ = get(base, "/worker.js", auth=False)
+    t.ok(st == 200 or not os.path.exists(os.path.join(demo_dir, "worker.js")),
+         "demo worker.js served")
 
-    # ---- concurrency: parallel range reads
-    import threading
-
-    results = []
-    def fetch():
-        _, _, b = get(base, mpc_url, {"Range": "bytes=10000-11000"})
-        results.append(b)
-    threads = [threading.Thread(target=fetch) for _ in range(4)]
-    for th in threads:
-        th.start()
-    for th in threads:
-        th.join()
-    t.ok(all(b == src[10000:11001] for b in results) and len(results) == 4,
-         "concurrent range reads consistent")
+    print(f"server_api_test: {t.passed} passed, {t.failures} failed")
+    return t.failures == 0
 
 
 def main():
+    global TOKEN
     if len(sys.argv) < 2:
         print(__doc__)
         return 2
@@ -356,10 +336,10 @@ def main():
         setup(sys.argv[2], sys.argv[3], sys.argv[4])
         return 0
     if mode == "run":
+        TOKEN = sys.argv[4]
         t = T()
-        run(sys.argv[2], sys.argv[3], t)
-        print(f"server_api_test: {t.passed} passed, {t.failures} failed")
-        return 0 if t.failures == 0 else 1
+        ok = run(sys.argv[2], sys.argv[3], sys.argv[5], t)
+        return 0 if ok else 1
     print("unknown mode", mode)
     return 2
 

@@ -10,7 +10,7 @@ set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WASM_BUILD="${1:?wasm build dir}"
-FIXTURE="${2:-$ROOT/tests/fixtures/sine44-q5.mpc}"
+FIXTURE="${2:-$ROOT/tests/fixtures/sine44-q5-48s.mpc}"
 
 MODULE_JS="$WASM_BUILD/wasm/musepack.js"
 SMOKE_JS="$ROOT/wasm/smoke.js"

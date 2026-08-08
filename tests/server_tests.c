@@ -48,6 +48,7 @@
 #include "mime.h"
 #include "range.h"
 #include "scanner.h"
+#include "tokens.h"
 
 #include <musicpack/musicpack.h>
 
@@ -276,10 +277,10 @@ test_migrations(void)
     char err[256];
     snprintf(dbpath, sizeof dbpath, "%s/mig.db", g_tmpdir);
     CHECK(mp_db_open(&db, dbpath, 1, err, sizeof err) == 0, "open fresh db");
-    CHECK(db != 0 && mp_db_schema_version(db) == 1, "schema version 1");
+    CHECK(db != 0 && mp_db_schema_version(db) == 2, "schema version 2");
     mp_db_close(db);
     CHECK(mp_db_open(&db, dbpath, 1, err, sizeof err) == 0, "reopen db");
-    CHECK(mp_db_schema_version(db) == 1, "version stable on reopen");
+    CHECK(mp_db_schema_version(db) == 2, "version stable on reopen");
     mp_db_close(db);
     CHECK(mp_db_open(&db, dbpath, 0, err, sizeof err) == 0, "open read-only");
     mp_db_close(db);
@@ -368,7 +369,7 @@ test_scanner(void)
     db = mp_library_sqlite(lib_h);
 
     /* 1. empty library */
-    mp_scan_library(lib_h, lib, 0, &res);
+    mp_scan_library(lib_h, lib, 0, &res, 0, 0);
     CHECK(res.total == 0 && res.added == 0, "empty library scans clean");
 
     /* 2. one mpc + one flac package */
@@ -376,7 +377,7 @@ test_scanner(void)
     snprintf(pkg_flac, sizeof pkg_flac, "%s/Classical.mpack", lib);
     copy_tree(g_ref_mpc, pkg_mpc);
     copy_tree(g_ref_flac, pkg_flac);
-    mp_scan_library(lib_h, lib, 0, &res);
+    mp_scan_library(lib_h, lib, 0, &res, 0, 0);
     CHECK(res.total == 2 && res.added == 2, "two packages added");
     CHECK(count_rows(db, "SELECT COUNT(*) FROM release_groups", -1) == 2,
           "two release groups");
@@ -386,7 +387,7 @@ test_scanner(void)
           "seven tracks (4 mpc + 3 flac)");
 
     /* 3. idempotent second scan */
-    mp_scan_library(lib_h, lib, 0, &res);
+    mp_scan_library(lib_h, lib, 0, &res, 0, 0);
     CHECK(res.total == 2 && res.added == 0 && res.updated == 0,
           "idempotent rescan changes nothing");
     CHECK(count_rows(db, "SELECT COUNT(*) FROM tracks", -1) == 7,
@@ -401,7 +402,7 @@ test_scanner(void)
         replace_in_file(mpath, "\"edition\": \"2016 Digital Remaster\"",
                         "\"edition\": \"1987 Original CD\"");
     }
-    mp_scan_library(lib_h, lib, 0, &res);
+    mp_scan_library(lib_h, lib, 0, &res, 0, 0);
     CHECK(res.total == 3 && res.added == 1, "third package added");
     CHECK(count_rows(db, "SELECT COUNT(*) FROM release_groups", -1) == 2,
           "still two groups (edition grouped)");
@@ -417,7 +418,7 @@ test_scanner(void)
         replace_in_file(mpath, "\"title\": \"Alphaville - Big in Japan\"",
                         "\"title\": \"Big in Japan (2016 mix)\"");
     }
-    mp_scan_library(lib_h, lib, 0, &res);
+    mp_scan_library(lib_h, lib, 0, &res, 0, 0);
     CHECK(res.updated == 1 && res.added == 0, "changed package updated");
     CHECK(count_rows(db, "SELECT COUNT(*) FROM tracks", -1) == 11,
           "no track duplication on update");
@@ -433,7 +434,7 @@ test_scanner(void)
         snprintf(mpath, sizeof mpath, "%s/manifest.json", bad);
         write_file(mpath, "{ this is not json ");
     }
-    mp_scan_library(lib_h, lib, 0, &res);
+    mp_scan_library(lib_h, lib, 0, &res, 0, 0);
     CHECK(res.invalid == 1, "malformed package recorded invalid");
     CHECK(count_rows(db,
         "SELECT COUNT(*) FROM packages WHERE status='invalid'", -1) == 1,
@@ -456,7 +457,7 @@ test_scanner(void)
     }
     snprintf(cmd, sizeof cmd, "mv '%s' '%s'", pkg_flac, moved);
     if (system(cmd) == 0) {
-        mp_scan_library(lib_h, lib, 0, &res);
+        mp_scan_library(lib_h, lib, 0, &res, 0, 0);
         CHECK(res.moved == 1, "moved package detected");
         {
             sqlite3_stmt *st;
@@ -478,7 +479,7 @@ test_scanner(void)
     /* 8. deleted package -> unavailable */
     snprintf(cmd, sizeof cmd, "rm -rf '%s'", pkg_mpc);
     if (system(cmd) == 0) {
-        mp_scan_library(lib_h, lib, 0, &res);
+        mp_scan_library(lib_h, lib, 0, &res, 0, 0);
         CHECK(res.removed == 1, "deleted package marked unavailable");
         {
             sqlite3_stmt *st;
@@ -500,7 +501,7 @@ test_scanner(void)
     lib_h = mp_library_open(dbpath, 1, 0, 0);
     CHECK(lib_h != 0, "reopen after close");
     db = mp_library_sqlite(lib_h);
-    mp_scan_library(lib_h, lib, 0, &res);
+    mp_scan_library(lib_h, lib, 0, &res, 0, 0);
     CHECK(res.added == 0 && res.updated == 0, "restart rescan is a no-op");
     mp_library_close(lib_h);
 }
@@ -525,6 +526,136 @@ test_mime(void)
     CHECK(strcmp(mp_codec_for_path("audio/x.mpc"), "musepack") == 0,
           "mpc codec");
     CHECK(strcmp(mp_codec_for_path("audio/x.flac"), "flac") == 0, "flac codec");
+}
+
+/* ---------- tokens / verify / progress ----------------------------------- */
+
+static int
+count_query(sqlite3 *db, const char *sql, const char *bind)
+{
+    sqlite3_stmt *st;
+    int n = 0;
+    if (sqlite3_prepare_v2(db, sql, -1, &st, 0) != SQLITE_OK)
+        return -1;
+    if (bind != 0)
+        sqlite3_bind_text(st, 1, bind, -1, SQLITE_TRANSIENT);
+    if (sqlite3_step(st) == SQLITE_ROW)
+        n = sqlite3_column_int(st, 0);
+    sqlite3_finalize(st);
+    return n;
+}
+
+static void
+test_tokens(void)
+{
+    char dbpath[4096], libdir[4096];
+    mp_library *lib;
+    char s1[MP_TOKEN_SECRET_MAX], s2[MP_TOKEN_SECRET_MAX];
+    char bad[MP_TOKEN_SECRET_MAX];
+    long long id = -1;
+    mp_token_row row;
+    sqlite3 *db;
+
+    snprintf(dbpath, sizeof dbpath, "%s/tok.db", g_tmpdir);
+    snprintf(libdir, sizeof libdir, "%s/toklib", g_tmpdir);
+    make_dir(libdir);
+    lib = mp_library_open(dbpath, 1, 0, 0);
+    CHECK(lib != 0, "open token db");
+    db = mp_library_sqlite(lib);
+
+    CHECK(mp_token_create(lib, "Web", s1, sizeof s1, &id) == MUSICPACK_OK,
+          "create token");
+    CHECK(id > 0, "token id assigned");
+    CHECK(strncmp(s1, "mpk_", 4) == 0 && strlen(s1) >= 40,
+          "token shape (mpk_ prefix, >=256 bits encoded)");
+    CHECK(mp_token_create(lib, "Phone", s2, sizeof s2, 0) == MUSICPACK_OK,
+          "create second token");
+    CHECK(strcmp(s1, s2) != 0, "tokens are unique");
+
+    /* only the hash is persisted */
+    CHECK(count_query(db,
+        "SELECT COUNT(*) FROM tokens WHERE token_hash = ?1", s1) == 0,
+        "plaintext token never stored");
+
+    CHECK(mp_token_authorize(lib, s1, &row) == 1, "authorize valid token");
+    CHECK(mp_token_authorize(lib, s2, &row) == 1, "authorize second token");
+    mp_token_generate(bad, sizeof bad);
+    CHECK(mp_token_authorize(lib, bad, &row) == 0, "reject unknown token");
+    CHECK(mp_token_authorize(lib, "", &row) == 0, "reject empty token");
+
+    CHECK(mp_token_secret_eq(s1, s1) == 1 && mp_token_secret_eq(s1, s2) == 0,
+          "constant-time compare");
+
+    CHECK(mp_token_revoke(lib, id) == 1, "revoke token");
+    CHECK(mp_token_revoke(lib, id) == 0, "revoke idempotent");
+    CHECK(mp_token_authorize(lib, s1, &row) == 0, "reject revoked token");
+    CHECK(count_query(db,
+        "SELECT COUNT(*) FROM tokens WHERE revoked_at IS NOT NULL", 0) == 1,
+        "revocation persisted");
+
+    mp_library_close(lib);
+}
+
+static int g_progress_calls = 0;
+static void
+progress_cb(void *ctx, const mp_scan_result *partial)
+{
+    (void) ctx;
+    (void) partial;
+    g_progress_calls++;
+}
+
+static void
+test_verify(void)
+{
+    char libdir[4096], dbpath[4096];
+    char pkg[4096];
+    mp_library *lib;
+    mp_scan_result res;
+    mp_verify_result vr;
+    sqlite3 *db;
+
+    snprintf(libdir, sizeof libdir, "%s/vlib", g_tmpdir);
+    snprintf(dbpath, sizeof dbpath, "%s/v.db", g_tmpdir);
+    make_dir(libdir);
+    snprintf(pkg, sizeof pkg, "%s/Good.mpack", libdir);
+    copy_tree(g_ref_mpc, pkg);
+
+    lib = mp_library_open(dbpath, 1, 0, 0);
+    CHECK(lib != 0, "open verify db");
+    db = mp_library_sqlite(lib);
+
+    g_progress_calls = 0;
+    mp_scan_library(lib, libdir, 0, &res, progress_cb, 0);
+    CHECK(res.added == 1, "scan one package");
+    CHECK(g_progress_calls >= 1, "scan progress callback invoked");
+
+    /* a clean package verifies clean */
+    mp_verify_library(lib, libdir, &vr, 0, 0);
+    CHECK(vr.total == 1 && vr.passed == 1 && vr.failed == 0,
+          "verify clean package");
+
+    /* corrupt audio -> checksum mismatch */
+    {
+        char apath[4096];
+        FILE *f;
+        snprintf(apath, sizeof apath, "%s/audio/01 - Alphaville - Big in Japan.mpc",
+                 pkg);
+        f = fopen(apath, "ab");
+        CHECK(f != 0, "open audio to corrupt");
+        if (f != 0) {
+            fwrite("X", 1, 1, f);
+            fclose(f);
+        }
+    }
+    mp_verify_library(lib, libdir, &vr, 0, 0);
+    CHECK(vr.total == 1 && vr.passed == 0 && vr.failed == 1,
+          "verify detects checksum mismatch");
+    CHECK(count_query(db,
+        "SELECT COUNT(*) FROM packages WHERE verify_status='checksum-failed'",
+        0) == 1, "checksum-failed persisted");
+
+    mp_library_close(lib);
 }
 
 /* ---------- main ----------------------------------------------------------- */
@@ -555,6 +686,8 @@ main(int argc, char **argv)
     test_migrations();
     test_identity(g_ref_mpc);
     test_mime();
+    test_tokens();
+    test_verify();
     test_scanner();
 
     if (failures == 0) {
