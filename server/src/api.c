@@ -1426,6 +1426,28 @@ dispatch(mp_server_ctx *srv, struct MHD_Connection *c, const char *method,
     return error_response(404, "not_found", "Unknown endpoint");
 }
 
+/* True when \p origin is the same origin as the request's Host header
+   (browsers send an Origin header on same-origin POSTs too; those must not be
+   treated as cross-origin). */
+static int
+origin_matches_host(const char *origin, struct MHD_Connection *c)
+{
+    const char *host = MHD_lookup_connection_value(c, MHD_HEADER_KIND, "Host");
+    const char *p, *slash;
+    size_t olen, hlen;
+
+    if (host == 0 || origin == 0)
+        return 0;
+    p = strstr(origin, "://");
+    if (p == 0)
+        return 0;
+    p += 3;
+    slash = strchr(p, '/');
+    olen = slash != 0 ? (size_t) (slash - p) : strlen(p);
+    hlen = strlen(host);
+    return olen == hlen && strncasecmp(p, host, olen) == 0;
+}
+
 /* Public entry: CORS gate, then dispatch. Authentication for the API routes
    happens inside dispatch (health + session create/logout are public). */
 struct MHD_Response *
@@ -1440,7 +1462,8 @@ mp_api_handle(mp_server_ctx *srv, struct MHD_Connection *c, const char *method,
 
     *status_out = 200;
     if (origin != 0) {
-        if (mp_config_origin_allowed(srv->cfg, origin)) {
+        if (mp_config_origin_allowed(srv->cfg, origin) ||
+            origin_matches_host(origin, c)) {
             cors_ok = 1;
         } else {
             *status_out = 403;
