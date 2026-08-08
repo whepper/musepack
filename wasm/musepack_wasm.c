@@ -115,11 +115,10 @@ int mpc_wasm_open(int h, const void *data, unsigned int size)
 }
 
 /* ---- range reader: the decoder's reads go through JS imports ----------
-   The JS side (Module.mpcRangeRead/Seek/Tell, see range_library.js) owns a
-   virtual file and fulfills reads/seeks by issuing HTTP Range requests
-   against a musicpack-server. The module is built with ASYNCIFY, so an
-   async read suspends the decoder until the fetch resolves; decoder calls
-   that touch the reader therefore return a Promise to JS (await them). */
+   The JS side (Module.mpcRangeRead/Seek/Tell, see range_library.js) fulfills
+   reads/seeks for the virtual compressed file. The Phase 5 browser reader
+   coordinates with a network worker over SharedArrayBuffer + Atomics, so the
+   imports stay synchronous and the decoder never blocks on a fetch. */
 
 /* declared in range_library.js */
 extern int mpc_range_read(int ptr, int size);

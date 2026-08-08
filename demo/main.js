@@ -19,6 +19,7 @@ const serverUrlEl = document.getElementById('serverurl');
 const loadServerBtn = document.getElementById('loadserver');
 const trackSelect = document.getElementById('trackselect');
 const serverStatusEl = document.getElementById('serverstatus');
+const tokenEl = document.getElementById('servertoken');
 
 const worker = new Worker('worker.js');
 
@@ -172,8 +173,15 @@ fileInput.addEventListener('change', async () => {
 /* musicpack-server streaming (HTTP Range)                             */
 /* ------------------------------------------------------------------ */
 
+/* API token: held in memory only (never localStorage). Sent as Bearer on
+   every request, including the range fetches the network worker performs. */
+function authHeaders() {
+  const t = tokenEl.value.trim();
+  return t ? { Authorization: 'Bearer ' + t } : {};
+}
+
 async function json(url) {
-  const res = await fetch(url);
+  const res = await fetch(url, { headers: authHeaders() });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }
@@ -181,6 +189,10 @@ async function json(url) {
 loadServerBtn.addEventListener('click', async () => {
   const base = serverUrlEl.value.replace(/\/+$/, '');
   if (!base) { serverStatusEl.textContent = 'enter a server URL'; return; }
+  if (!tokenEl.value.trim()) {
+    serverStatusEl.textContent = 'enter an API token';
+    return;
+  }
   serverStatusEl.textContent = 'loading albums...';
   trackSelect.innerHTML = '';
   trackSelect.disabled = true;
@@ -219,15 +231,18 @@ trackSelect.addEventListener('change', async () => {
   const tracks = window.__serverTracks;
   if (!tracks || trackSelect.value === '') return;
   const t = tracks[Number(trackSelect.value)];
-  statusEl.textContent = 'Loading over HTTP Range: ' + t.label + '...';
+  statusEl.textContent = 'Opening over HTTP Range: ' + t.label + '...';
   enableButtons(false);
   infoEl.textContent = '';
   if (ctx) { await ctx.close(); ctx = null; sink = null; }
   playing = false;
   playBtn.textContent = 'Play';
-  // The worker opens the audio URL through the JS range reader, so decoding
-  // and seeking exercise HTTP Range (206) against the server.
-  worker.postMessage({ type: 'openUrl', url: t.url, size: t.size });
+  // The worker decodes through a demand-driven range reader: the WASM
+  // decoder fetches only the compressed ranges it needs (SharedArrayBuffer
+  // + Atomics + a network worker), so playback starts before the full file
+  // and seeking fetches just the required ranges.
+  worker.postMessage({ type: 'openUrl', url: t.url, size: t.size,
+                       token: tokenEl.value.trim() });
   statusEl.textContent = 'Streaming ' + t.label;
 });
 

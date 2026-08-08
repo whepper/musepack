@@ -65,31 +65,39 @@ No encoder fixtures ship with the demo; encode any WAV first with the native
 - playback position readout
 - end-of-stream handling (replays from the start on Play)
 
-## Streaming from a musicpack-server (Phase 4)
+## Streaming from a musicpack-server (Phase 5)
 
-The demo can play a Musepack track served by `musicpack-server` directly over
-HTTP Range, using the JS range reader (`demo/rangereader.js` +
-`mpc_wasm_open_range`):
+The demo can play a Musepack track served by `musicpack-server` using the
+**demand-driven range reader**:
 
 ```text
 musicpack-server
-     ↓  HTTP Range (206), chunked fetch
-RangeReader (assembles the original bytes)
-     ↓  libmusepack.wasm (JS-callback reader)
-PCM  →  Web Audio
+     ↓  HTTP Range (206), only the blocks the decoder asks for
+network Worker (block cache + fetch + Bearer auth)
+     ↓  SharedArrayBuffer + Atomics (two-flag REQ/RES handshake)
+libmusepack.wasm (mpc_wasm_open_range)
+     ↓  PCM
+Web Audio
 ```
 
-Enter the server base URL (e.g. `http://127.0.0.1:8080`), press "Load albums
-from server", pick a track, Play. The track bytes are fetched with
-`Range: bytes=...` requests (each answered 206) and decoded through
-`mpc_wasm_open_range`, whose reads/seeks go through JS callbacks. Bytes are
-never transcoded or rewritten; the served file is the original `.mpc`, and the
-server-side Range semantics (206/416, byte-identity) are covered exhaustively
-by `tests/run_server.sh`.
+Enter the server URL and an API token, press "Load albums", pick a track,
+Play. The decoder requests only the compressed ranges it needs: playback
+starts before the whole file is downloaded, and seeking (e.g. to 90%) fetches
+just the new block(s). Bytes are never transcoded or rewritten; the served
+file is the original `.mpc`.
 
-Seeking is served from the fetched buffer (the reader stays synchronous and
-the decoder single-threaded); a future SAB/Atomics-backed reader can go fully
-demand-driven behind the same imports without changing the decoder.
+Requirements:
+
+- Serve the demo with the Phase 5 server's `--static-dir` (it sends
+  `Cross-Origin-Opener-Policy: same-origin` + `Cross-Origin-Embedder-Policy:
+  require-corp`, which the `SharedArrayBuffer` reader needs).
+- Enter an API token; it is kept in memory only and sent as
+  `Authorization: Bearer` on every request (including range fetches).
+
+Network failures (timeouts, 401, 404/503, truncated 206, missing
+Content-Range, unexpected 200) surface as a clear playback error rather than
+corrupted audio. The `wasm/smoke.js` suite exercises the reader in Node
+(including a seek-to-90% fetch-accounting check and failure injection).
 
 ## Intended architecture (next step)
 

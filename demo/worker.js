@@ -13,6 +13,7 @@
  */
 
 importScripts('musepack.js');
+importScripts('reader_mailbox.js');
 importScripts('rangereader.js');
 
 const FRAMES_PER_CHUNK = 8 * 1152; // 8 decoder frames per message
@@ -25,7 +26,7 @@ let channels = 2;
 let playing = false;
 let eos = false;
 let pumping = false;
-let rangeReader = null;
+let demandReader = null;
 
 function post(msg) { self.postMessage(msg, msg.samples ? [msg.samples.buffer] : undefined); }
 
@@ -49,20 +50,26 @@ async function open(buffer) {
   postInfo();
 }
 
-/* Opens a track served by a musicpack-server over HTTP Range: the whole
-   object is fetched as Range chunks (206 each), then decoded through the
-   JS-callback range reader. Seeking is served from the fetched buffer. */
-async function openUrl(url, size) {
+/* Opens a track served by a musicpack-server over HTTP Range using the
+   demand-driven reader: the decoder requests only the compressed ranges it
+   needs (SharedArrayBuffer + Atomics + a network worker with a block
+   cache), so playback starts before the full file and seeking fetches just
+   the required ranges. */
+async function openUrl(url, size, token) {
   if (handle >= 0) destroy();
   handle = Module._mpc_wasm_create();
   if (handle < 0) throw new Error('mpc_wasm_create failed');
 
-  const reader = new MusicPackRange.RangeReader(url, size);
-  await reader.fetchAll();
-  rangeReader = await MusicPackRange.installRangeCallbacks(Module, reader);
-
+  demandReader = await MusicPackRange.installDemandReader(Module, url, size,
+                                                          token);
   const err = Module._mpc_wasm_open_range(handle, size);
-  if (err !== 0) throw new Error('mpc_wasm_open_range returned ' + err);
+  if (err !== 0) {
+    const le = demandReader.lastError();
+    demandReader.close();
+    demandReader = null;
+    throw new Error('mpc_wasm_open_range returned ' + err +
+                    (le ? ` (reader error ${le})` : ''));
+  }
 
   pcmPtr = Module._malloc(FRAMES_PER_CHUNK * channels * 4);
   postInfo();
@@ -85,9 +92,9 @@ function destroy() {
     if (heapPtr) Module._free(heapPtr);
     Module._mpc_wasm_destroy(handle);
   }
-  if (rangeReader) {
-    Module.mpcRangeRead = Module.mpcRangeSeek = Module.mpcRangeTell = null;
-    rangeReader = null;
+  if (demandReader) {
+    demandReader.close();
+    demandReader = null;
   }
   handle = -1; heapPtr = 0; pcmPtr = 0;
 }
@@ -99,7 +106,10 @@ async function readChunk() {
       eos = true;
       post({ type: 'eos' });
     } else {
-      post({ type: 'error', message: 'mpc_wasm_read returned ' + frames });
+      let msg = 'mpc_wasm_read returned ' + frames;
+      if (demandReader && demandReader.lastError())
+        msg += ` (stream read error ${demandReader.lastError()})`;
+      post({ type: 'error', message: msg });
     }
     return;
   }
@@ -127,7 +137,7 @@ self.onmessage = async (ev) => {
         await open(msg.buffer);
         break;
       case 'openUrl':
-        await openUrl(msg.url, msg.size);
+        await openUrl(msg.url, msg.size, msg.token);
         break;
       case 'play':
         playing = true;

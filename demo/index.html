@@ -23,11 +23,14 @@
 </div>
 
 <div class="row" id="serverrow">
-  <input type="url" id="serverurl" placeholder="http://127.0.0.1:8080" size="28">
-  <button id="loadserver">Load albums from server</button>
+  <input type="url" id="serverurl" placeholder="http://127.0.0.1:8080" size="24">
+  <input type="password" id="servertoken" placeholder="API token" size="30" autocomplete="off">
+  <button id="loadserver">Load albums</button>
   <select id="trackselect" disabled></select>
   <span id="serverstatus"></span>
 </div>
+<p id="tokennote">The token is kept in memory only and sent as
+<code>Authorization: Bearer</code> on every request. It is never stored.</p>
 
 <div class="row">
   <input type="range" id="seek" min="0" max="1000" value="0" step="1" disabled>
