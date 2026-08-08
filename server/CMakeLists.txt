@@ -24,6 +24,7 @@ set(MUSICPACK_SERVER_SOURCES
     src/config.c
     src/random.c
     src/tokens.c
+    src/sessions.c
     ${CMAKE_CURRENT_SOURCE_DIR}/vendor/sqlite/sqlite3.c)
 
 add_library(musicpack_server STATIC ${MUSICPACK_SERVER_SOURCES})

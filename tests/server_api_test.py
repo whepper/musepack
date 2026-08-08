@@ -106,11 +106,11 @@ def setup(ref_mpc, ref_flac, tmpdir):
 # http helpers
 # --------------------------------------------------------------------------
 
-def get(base, path, headers=None, method=None, auth=True):
+def get(base, path, headers=None, method=None, auth=True, data=None):
     h = dict(headers or {})
     if auth and TOKEN:
         h["Authorization"] = "Bearer " + TOKEN
-    req = urllib.request.Request(base + path, headers=h)
+    req = urllib.request.Request(base + path, headers=h, data=data)
     if method:
         req.get_method = lambda: method
     try:
@@ -194,6 +194,52 @@ def run(base, libdir, demo_dir, t):
     t.ok(st == 200 and "Access-Control-Allow-Origin" not in h,
          "no-Origin native client unaffected")
 
+    # ---- session exchange (Phase 6: HttpOnly cookie for the browser client)
+    st, _, body = get(base, API + "/session", method="POST",
+                      headers={"Content-Type": "application/json"},
+                      data=b'{"token":"mpk_not_a_real_token"}', auth=False)
+    t.ok(st == 401, "session exchange with invalid token -> 401")
+    st, _, body = get(base, API + "/session", method="POST",
+                      headers={"Content-Type": "application/json"},
+                      data=b'{ broken json', auth=False)
+    t.ok(st == 400, "session exchange with malformed body -> 400")
+    st, h, body = get(base, API + "/session", method="POST",
+                      headers={"Content-Type": "application/json"},
+                      data=json.dumps({"token": TOKEN}).encode(), auth=False)
+    cookie = h.get("Set-Cookie", "")
+    t.ok(st == 200 and json.loads(body)["status"] == "authenticated",
+         "session exchange with valid token -> 200")
+    t.ok("HttpOnly" in cookie and "SameSite=Strict" in cookie
+         and "musicpack_session=" in cookie,
+         "session cookie is HttpOnly + SameSite=Strict")
+    sess_val = cookie.split("musicpack_session=", 1)[1].split(";", 1)[0]
+    t.ok(sess_val and not sess_val.startswith("mpk_"),
+         "cookie value is the opaque session secret, not the bearer token")
+
+    # the cookie authenticates subsequent requests without a bearer token
+    st, _, body = get(base, API + "/albums",
+                      headers={"Cookie": f"musicpack_session={sess_val}"},
+                      auth=False)
+    t.ok(st == 200, "session cookie authenticates")
+    st, _, body = get(base, API + "/session",
+                      headers={"Cookie": f"musicpack_session={sess_val}"},
+                      auth=False)
+    t.ok(st == 200 and json.loads(body).get("session", {}).get("id", 0) > 0,
+         "GET /session reports the session")
+    st, _, _ = get(base, API + "/session", method="DELETE",
+                   headers={"Cookie": f"musicpack_session={sess_val}"},
+                   auth=False)
+    t.ok(st == 204, "DELETE /session -> 204")
+    st, _, _ = get(base, API + "/albums",
+                   headers={"Cookie": f"musicpack_session={sess_val}"},
+                   auth=False)
+    t.ok(st == 401, "revoked session cookie rejected")
+    st, _, _ = get(base, API + "/albums", headers={"Cookie": "musicpack_session=garbage"},
+                   auth=False)
+    t.ok(st == 401, "bogus session cookie rejected")
+    st, _, _ = get(base, API + "/session", method="POST", auth=False)
+    t.ok(st == 400, "session exchange without a body -> 400")
+
     # ---- albums / collector hierarchy (Phase 4 behaviour preserved)
     st, _, body = get(base, API + "/albums")
     albums = json.loads(body)
@@ -219,6 +265,38 @@ def run(base, libdir, demo_dir, t):
          == "musepack-sv8", "release detail + codec")
     track = rel["media"][0]["tracks"][0]
     tid = track["id"]
+
+    # ---- Phase 6 client fields: artwork, duration, album loudness
+    comp_alb = next(a for a in albums["albums"]
+                    if a["title"] == "Synthetic Test Compilation")
+    t.ok(comp_alb.get("artwork", {}).get("url", "").startswith("/api/v1/assets/"),
+         "album list exposes front artwork")
+    t.ok(track.get("duration", 0) > 0, "track duration exposed")
+    t.ok(rel.get("loudness", {}).get("albumLufs", 0) < 0
+         and rel["loudness"]["algorithm"] == "ITU-R BS.1770-5",
+         "release exposes canonical album loudness")
+    st, _, body = get(base, API + f"/albums/{comp_alb['id']}")
+    adetail = json.loads(body)
+    ed_with_art = [r for r in adetail["releases"] if r.get("artwork")]
+    t.ok(len(ed_with_art) >= 2, "editions carry their own artwork")
+
+    # ---- search + recently added
+    st, _, body = get(base, API + "/albums?q=Two%20Disc")
+    qalb = json.loads(body)
+    t.ok(st == 200 and len(qalb["albums"]) == 1
+         and qalb["albums"][0]["title"] == "Two Disc Extravaganza",
+         "?q= filters albums by title/artist")
+    st, _, body = get(base, API + "/albums?q=Synthetic")
+    t.ok(st == 200 and len(json.loads(body)["albums"]) == 2,
+         "?q= matches substring across albums")
+    st, _, body = get(base, API + "/artists?q=Alphaville")
+    qart = json.loads(body)
+    t.ok(st == 200 and len(qart["artists"]) == 1
+         and qart["artists"][0]["name"] == "Alphaville",
+         "?q= filters artists")
+    st, _, body = get(base, API + "/albums?sort=recent")
+    t.ok(st == 200 and len(json.loads(body)["albums"]) >= 1,
+         "?sort=recent lists albums")
 
     # ---- streaming + Range + ETag
     st, _, body = get(base, API + f"/tracks/{tid}/audio")
@@ -314,6 +392,16 @@ def run(base, libdir, demo_dir, t):
     st, h, _ = get(base, "/index.html", auth=False)
     t.ok(st == 200 and h.get("Content-Type", "").startswith("text/html"),
          "static index.html served")
+    # SPA fallback: unknown extension-less client routes serve index.html
+    st, h, body = get(base, "/albums/2", auth=False)
+    t.ok(st == 200 and h.get("Content-Type", "").startswith("text/html")
+         and b"<html" in body.lower(),
+         "SPA deep link falls back to index.html")
+    st, h, body = get(base, "/albums/2?release=3", auth=False)
+    t.ok(st == 200 and b"<html" in body.lower(),
+         "SPA fallback preserves query strings")
+    st, _, _ = get(base, "/nonexistent.js", auth=False)
+    t.ok(st == 404, "missing asset with an extension -> 404")
     # static dir cannot escape
     st, _, _ = get(base, "/../../etc/passwd", auth=False)
     t.ok(st == 404 or st == 400, "static traversal rejected")

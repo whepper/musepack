@@ -55,6 +55,7 @@ typedef struct mp_config {
     char static_dir[4096];    ///< serve demo/static files ("" = disabled)
     char allow_origin[8][512]; ///< explicit CORS whitelist
     int allow_origin_count;
+    int secure_cookies;   ///< session cookies always carry the Secure flag
 } mp_config;
 
 /// Maximum number of explicitly allowed origins.

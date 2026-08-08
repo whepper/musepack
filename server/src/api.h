@@ -60,9 +60,12 @@ typedef struct mp_server_ctx {
 
 /// Handles one request. Returns an MHD response (caller queues + destroys)
 /// or NULL on internal failure. \p status_out receives the HTTP status code.
+/// \p body/\p body_len carry the received request body (POST only; otherwise
+/// NULL/0).
 struct MHD_Response *mp_api_handle(mp_server_ctx *srv,
                                    struct MHD_Connection *c,
                                    const char *method, const char *url,
+                                   const char *body, size_t body_len,
                                    unsigned int *status_out);
 
 #ifdef __cplusplus

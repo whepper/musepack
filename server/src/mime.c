@@ -29,7 +29,15 @@ mp_mime_for_path(const char *path)
     if (strcmp(e, ".bmp") == 0)  return "image/bmp";
     if (strcmp(e, ".pdf") == 0)  return "application/pdf";
     if (strcmp(e, ".html") == 0 || strcmp(e, ".htm") == 0) return "text/html";
-    if (strcmp(e, ".js") == 0)   return "text/javascript";
+    if (strcmp(e, ".js") == 0 || strcmp(e, ".mjs") == 0) return "text/javascript";
+    if (strcmp(e, ".css") == 0)  return "text/css";
+    if (strcmp(e, ".json") == 0) return "application/json";
+    if (strcmp(e, ".svg") == 0)  return "image/svg+xml";
+    if (strcmp(e, ".woff") == 0) return "font/woff";
+    if (strcmp(e, ".woff2") == 0) return "font/woff2";
+    if (strcmp(e, ".ico") == 0)  return "image/x-icon";
+    if (strcmp(e, ".wasm") == 0) return "application/wasm";
+    if (strcmp(e, ".map") == 0)  return "application/json";
     if (strcmp(e, ".lrc") == 0 || strcmp(e, ".txt") == 0 ||
         strcmp(e, ".md") == 0)   return "text/plain";
     return "application/octet-stream";

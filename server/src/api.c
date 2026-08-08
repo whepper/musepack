@@ -9,6 +9,7 @@
 #include "mime.h"
 #include "range.h"
 #include "scanner.h"
+#include "sessions.h"
 #include "tokens.h"
 
 #include <fcntl.h>
@@ -29,8 +30,103 @@
 
 #define API_VERSION "v1"
 #define VISIBLE "p.status NOT IN ('invalid','unavailable')"
+#define SESSION_COOKIE "musicpack_session"
 
 /* ---------- small parsing helpers -------------------------------------- */
+
+/* Extracts the value of our session cookie from a Cookie header ("a=b; c=d").
+   Returns a pointer into \p cookie (not NUL-terminated) and its length, or 0
+   when absent. */
+static const char *
+cookie_value(const char *cookie, const char *name, size_t *len)
+{
+    const char *p = cookie;
+
+    for (;;) {
+        while (*p == ' ' || *p == ';')
+            p++;
+        if (strncmp(p, name, strlen(name)) != 0) {
+            p = strchr(p, ';');
+            if (p == 0)
+                return 0;
+            p++;
+            continue;
+        }
+        p += strlen(name);
+        if (*p != '=')
+            return 0;
+        p++;
+        {
+            const char *end = strchr(p, ';');
+            *len = end != 0 ? (size_t) (end - p) : strlen(p);
+            return *len > 0 ? p : 0;
+        }
+    }
+}
+
+/* Strictly extracts the bearer token from a POST /session JSON body
+   {"token":"mpk_..."}. The token grammar is constrained (mpk_ + base64url),
+   so a tiny parser beats pulling in a JSON dependency to read one field. */
+static int
+session_token_from_body(const char *body, size_t len, char *out, size_t cap)
+{
+    const char *p, *end, *v;
+    size_t vlen;
+
+    if (body == 0)
+        return 0;
+    end = body + len;
+    p = strstr(body, "\"token\"");
+    if (p == 0 || p >= end)
+        return 0;
+    p += strlen("\"token\"");
+    while (p < end && (*p == ' ' || *p == '\t' || *p == ':'))
+        p++;
+    if (p >= end || *p != '"')
+        return 0;
+    p++;
+    v = p;
+    while (p < end && *p != '"')
+        p++;
+    if (p >= end)
+        return 0;
+    vlen = (size_t) (p - v);
+    if (vlen == 0 || vlen >= cap)
+        return 0;
+    memcpy(out, v, vlen);
+    out[vlen] = '\0';
+    return 1;
+}
+
+/* Escapes LIKE wildcards so a user query is treated literally. Returns the
+   escaped length (or -1 when it does not fit). */
+static int
+like_escape(const char *src, char *out, size_t cap)
+{
+    size_t o = 0;
+    for (; *src != '\0' && o + 2 < cap; src++) {
+        if (*src == '\\' || *src == '%' || *src == '_')
+            out[o++] = '\\';
+        out[o++] = *src;
+    }
+    if (*src != '\0')
+        return -1;
+    out[o] = '\0';
+    return (int) o;
+}
+
+/* True when session cookies should carry Secure: forced by --secure-cookies
+   or when a TLS-terminating reverse proxy signals HTTPS. */
+static int
+request_is_secure(const mp_config *cfg, struct MHD_Connection *c)
+{
+    const char *fwd;
+
+    if (cfg->secure_cookies)
+        return 1;
+    fwd = MHD_lookup_connection_value(c, MHD_HEADER_KIND, "X-Forwarded-Proto");
+    return fwd != 0 && strcasecmp(fwd, "https") == 0;
+}
 
 static int
 parse_id(const char *s, long long *out)
@@ -342,7 +438,11 @@ handle_artists(mp_library *lib, struct MHD_Connection *c, unsigned int *st)
     sqlite3_stmt *qs, *cs;
     char *limit_s = (char *) MHD_lookup_connection_value(c, MHD_GET_ARGUMENT_KIND, "limit");
     char *offset_s = (char *) MHD_lookup_connection_value(c, MHD_GET_ARGUMENT_KIND, "offset");
+    char *q_s = (char *) MHD_lookup_connection_value(c, MHD_GET_ARGUMENT_KIND, "q");
     int limit, offset, total = 0;
+    char sql[2048];
+    char esc[256];
+    int n;
     mp_json *o = mp_json_obj(), *arr = mp_json_arr();
     char *s;
     struct MHD_Response *r;
@@ -354,31 +454,61 @@ handle_artists(mp_library *lib, struct MHD_Connection *c, unsigned int *st)
         return error_response(400, "invalid_request",
                               "limit/offset must be non-negative integers");
     }
-    if (sqlite3_prepare_v2(db,
-            "SELECT COUNT(*) FROM artists a WHERE EXISTS ("
-            "  SELECT 1 FROM group_artists ga"
-            "  JOIN releases r ON r.group_id = ga.group_id"
-            "  JOIN packages p ON p.release_id = r.id"
-            "  WHERE ga.artist_id = a.id AND " VISIBLE ")", -1, &cs, 0)
-        == SQLITE_OK && sqlite3_step(cs) == SQLITE_ROW)
-        total = sqlite3_column_int(cs, 0);
+    if (q_s != 0 && like_escape(q_s, esc, sizeof esc) < 0) {
+        mp_json_free(o);
+        *st = 400;
+        return error_response(400, "invalid_request", "search query too long");
+    }
+    n = snprintf(sql, sizeof sql,
+        "SELECT COUNT(*) FROM artists a WHERE EXISTS ("
+        "  SELECT 1 FROM group_artists ga"
+        "  JOIN releases r ON r.group_id = ga.group_id"
+        "  JOIN packages p ON p.release_id = r.id"
+        "  WHERE ga.artist_id = a.id AND " VISIBLE ")");
+    if (q_s != 0)
+        n += snprintf(sql + n, sizeof sql - (size_t) n,
+                      " AND a.name LIKE '%%' || ?1 || '%%' ESCAPE '\\'");
+    if (n >= (int) sizeof sql) {
+        mp_json_free(o);
+        *st = 500;
+        return error_response(500, "internal", "query too long");
+    }
+    if (sqlite3_prepare_v2(db, sql, -1, &cs, 0) == SQLITE_OK) {
+        if (q_s != 0)
+            sqlite3_bind_text(cs, 1, esc, -1, SQLITE_TRANSIENT);
+        if (sqlite3_step(cs) == SQLITE_ROW)
+            total = sqlite3_column_int(cs, 0);
+    }
     sqlite3_finalize(cs);
-    if (sqlite3_prepare_v2(db,
-            "SELECT a.id, a.name, COUNT(DISTINCT g.id) FROM artists a"
-            " JOIN group_artists ga ON ga.artist_id = a.id"
-            " JOIN release_groups g ON g.id = ga.group_id"
-            " JOIN releases r ON r.group_id = g.id"
-            " JOIN packages p ON p.release_id = r.id"
-            " WHERE " VISIBLE
-            " GROUP BY a.id, a.name"
-            " ORDER BY a.name COLLATE NOCASE"
-            " LIMIT ?1 OFFSET ?2", -1, &qs, 0) != SQLITE_OK) {
+    n = snprintf(sql, sizeof sql,
+        "SELECT a.id, a.name, COUNT(DISTINCT g.id) FROM artists a"
+        " JOIN group_artists ga ON ga.artist_id = a.id"
+        " JOIN release_groups g ON g.id = ga.group_id"
+        " JOIN releases r ON r.group_id = g.id"
+        " JOIN packages p ON p.release_id = r.id"
+        " WHERE " VISIBLE);
+    if (q_s != 0)
+        n += snprintf(sql + n, sizeof sql - (size_t) n,
+                      " AND a.name LIKE '%%' || ?3 || '%%' ESCAPE '\\'");
+    n += snprintf(sql + n, sizeof sql - (size_t) n,
+        " GROUP BY a.id, a.name ORDER BY a.name COLLATE NOCASE"
+        " LIMIT ?1 OFFSET ?2");
+    if (n >= (int) sizeof sql) {
+        mp_json_free(o);
+        *st = 500;
+        return error_response(500, "internal", "query too long");
+    }
+    if (sqlite3_prepare_v2(db, sql, -1, &qs, 0) != SQLITE_OK) {
+        MP_LOGI("search prepare err: %s", sqlite3_errmsg(db));
+        MP_LOGI("search sql: %s", sql);
         mp_json_free(o);
         *st = 500;
         return error_response(500, "internal", "query failed");
     }
     sqlite3_bind_int(qs, 1, limit);
     sqlite3_bind_int(qs, 2, offset);
+    if (q_s != 0)
+        sqlite3_bind_text(qs, 3, esc, -1, SQLITE_TRANSIENT);
     while (sqlite3_step(qs) == SQLITE_ROW) {
         mp_json *it = mp_json_obj();
         mp_json_int(it, "id", sqlite3_column_int64(qs, 0));
@@ -469,7 +599,12 @@ handle_albums(mp_library *lib, struct MHD_Connection *c, unsigned int *st)
     sqlite3_stmt *qs, *cs;
     char *limit_s = (char *) MHD_lookup_connection_value(c, MHD_GET_ARGUMENT_KIND, "limit");
     char *offset_s = (char *) MHD_lookup_connection_value(c, MHD_GET_ARGUMENT_KIND, "offset");
+    char *q_s = (char *) MHD_lookup_connection_value(c, MHD_GET_ARGUMENT_KIND, "q");
+    char *sort_s = (char *) MHD_lookup_connection_value(c, MHD_GET_ARGUMENT_KIND, "sort");
     int limit, offset, total = 0;
+    char sql[4096];
+    char esc[512];
+    int recent = 0, n;
     mp_json *o = mp_json_obj(), *arr = mp_json_arr();
     char *s;
     struct MHD_Response *r;
@@ -481,37 +616,97 @@ handle_albums(mp_library *lib, struct MHD_Connection *c, unsigned int *st)
         return error_response(400, "invalid_request",
                               "limit/offset must be non-negative integers");
     }
-    if (sqlite3_prepare_v2(db,
-            "SELECT COUNT(*) FROM release_groups g WHERE EXISTS ("
-            "  SELECT 1 FROM releases r JOIN packages p ON p.release_id = r.id"
-            "  WHERE r.group_id = g.id AND " VISIBLE ")", -1, &cs, 0)
-        == SQLITE_OK && sqlite3_step(cs) == SQLITE_ROW)
-        total = sqlite3_column_int(cs, 0);
+    if (q_s != 0 && like_escape(q_s, esc, sizeof esc) < 0) {
+        mp_json_free(o);
+        *st = 400;
+        return error_response(400, "invalid_request", "search query too long");
+    }
+    if (sort_s != 0 && strcmp(sort_s, "recent") == 0)
+        recent = 1;
+
+    n = snprintf(sql, sizeof sql,
+        "SELECT COUNT(*) FROM release_groups g WHERE EXISTS ("
+        "  SELECT 1 FROM releases r JOIN packages p ON p.release_id = r.id"
+        "  WHERE r.group_id = g.id AND " VISIBLE ")");
+    if (q_s != 0)
+        n += snprintf(sql + n, sizeof sql - (size_t) n,
+            " AND (g.title LIKE '%%' || ?1 || '%%' ESCAPE '\\' OR EXISTS ("
+            "  SELECT 1 FROM group_artists ga2"
+            "  JOIN artists ar2 ON ar2.id = ga2.artist_id"
+            "  WHERE ga2.group_id = g.id AND ar2.name LIKE '%%' || ?1 || '%%'"
+            "   ESCAPE '\\'))");
+    if (n >= (int) sizeof sql) {
+        mp_json_free(o);
+        *st = 500;
+        return error_response(500, "internal", "query too long");
+    }
+    if (sqlite3_prepare_v2(db, sql, -1, &cs, 0) == SQLITE_OK) {
+        if (q_s != 0)
+            sqlite3_bind_text(cs, 1, esc, -1, SQLITE_TRANSIENT);
+        if (sqlite3_step(cs) == SQLITE_ROW)
+            total = sqlite3_column_int(cs, 0);
+    }
     sqlite3_finalize(cs);
-    if (sqlite3_prepare_v2(db,
-            "SELECT g.id, g.title, g.release_type, g.original_release_date, g.mbid,"
-            "  (SELECT a.name FROM group_artists ga"
-            "    JOIN artists a ON a.id = ga.artist_id"
-            "    WHERE ga.group_id = g.id ORDER BY ga.position LIMIT 1) AS artist,"
-            "  (SELECT COUNT(*) FROM releases r WHERE r.group_id = g.id AND"
-            "    EXISTS (SELECT 1 FROM packages p WHERE p.release_id = r.id AND "
-            "      " VISIBLE ")) AS rc"
-            " FROM release_groups g"
-            " WHERE EXISTS (SELECT 1 FROM releases r"
-            "   JOIN packages p ON p.release_id = r.id"
-            "   WHERE r.group_id = g.id AND " VISIBLE ")"
-            " ORDER BY artist COLLATE NOCASE, g.title COLLATE NOCASE,"
-            "          g.original_release_date, g.id"
-            " LIMIT ?1 OFFSET ?2", -1, &qs, 0) != SQLITE_OK) {
+
+    n = snprintf(sql, sizeof sql,
+        "SELECT g.id, g.title, g.release_type, g.original_release_date, g.mbid,"
+        "  (SELECT a.name FROM group_artists ga"
+        "    JOIN artists a ON a.id = ga.artist_id"
+        "    WHERE ga.group_id = g.id ORDER BY ga.position LIMIT 1) AS artist,"
+        "  (SELECT COUNT(*) FROM releases r WHERE r.group_id = g.id AND"
+        "    EXISTS (SELECT 1 FROM packages p WHERE p.release_id = r.id AND "
+        "      " VISIBLE ")) AS rc,"
+        "  (SELECT aa.id FROM assets aa"
+        "    JOIN releases rr ON rr.id = aa.release_id"
+        "    JOIN packages pp ON pp.release_id = rr.id"
+        "    WHERE rr.group_id = g.id AND aa.kind = 'artwork'"
+        "      AND aa.role = 'front'"
+        "      AND pp.status NOT IN ('invalid','unavailable')"
+        "    ORDER BY rr.release_date, rr.id, aa.id LIMIT 1) AS art_id"
+        " FROM release_groups g"
+        " WHERE EXISTS (SELECT 1 FROM releases r"
+        "   JOIN packages p ON p.release_id = r.id"
+        "   WHERE r.group_id = g.id AND " VISIBLE ")");
+    if (q_s != 0)
+        n += snprintf(sql + n, sizeof sql - (size_t) n,
+            " AND (g.title LIKE '%%' || ?3 || '%%' ESCAPE '\\' OR EXISTS ("
+            "  SELECT 1 FROM group_artists ga2"
+            "  JOIN artists ar2 ON ar2.id = ga2.artist_id"
+            "  WHERE ga2.group_id = g.id AND ar2.name LIKE '%%' || ?3 || '%%'"
+            "   ESCAPE '\\'))");
+    n += snprintf(sql + n, sizeof sql - (size_t) n,
+        "%s LIMIT ?1 OFFSET ?2",
+        recent ? " ORDER BY g.created_at DESC, g.id DESC"
+               : " ORDER BY artist COLLATE NOCASE, g.title COLLATE NOCASE,"
+                 "          g.original_release_date, g.id");
+    if (n >= (int) sizeof sql) {
+        mp_json_free(o);
+        *st = 500;
+        return error_response(500, "internal", "query too long");
+    }
+    if (sqlite3_prepare_v2(db, sql, -1, &qs, 0) != SQLITE_OK) {
+        MP_LOGI("search prepare err: %s", sqlite3_errmsg(db));
+        MP_LOGI("search sql: %s", sql);
         mp_json_free(o);
         *st = 500;
         return error_response(500, "internal", "query failed");
     }
     sqlite3_bind_int(qs, 1, limit);
     sqlite3_bind_int(qs, 2, offset);
+    if (q_s != 0)
+        sqlite3_bind_text(qs, 3, esc, -1, SQLITE_TRANSIENT);
     while (sqlite3_step(qs) == SQLITE_ROW) {
         mp_json *it = group_object(lib, qs);
         mp_json_int(it, "releaseCount", sqlite3_column_int64(qs, 6));
+        if (sqlite3_column_int64(qs, 7) > 0) {
+            char url[64];
+            mp_json *art = mp_json_obj();
+            mp_json_int(art, "id", sqlite3_column_int64(qs, 7));
+            snprintf(url, sizeof url, "/api/%s/assets/%lld", API_VERSION,
+                     sqlite3_column_int64(qs, 7));
+            mp_json_str(art, "url", url);
+            mp_json_add(it, "artwork", art);
+        }
         mp_json_add(arr, 0, it);
     }
     sqlite3_finalize(qs);
@@ -560,7 +755,10 @@ handle_album_detail(mp_library *lib, long long id, unsigned int *st)
             "  r.identity_confidence,"
             "  (SELECT COUNT(*) FROM tracks t JOIN media me ON me.id = t.media_id"
             "    WHERE me.release_id = r.id) AS tc,"
-            "  p.status, p.verify_status"
+            "  p.status, p.verify_status,"
+            "  (SELECT aa.id FROM assets aa WHERE aa.release_id = r.id"
+            "    AND aa.kind = 'artwork' AND aa.role = 'front'"
+            "    ORDER BY aa.id LIMIT 1) AS art_id"
             " FROM releases r"
             " JOIN packages p ON p.release_id = r.id"
             " WHERE r.group_id = ?1 AND " VISIBLE
@@ -589,6 +787,15 @@ handle_album_detail(mp_library *lib, long long id, unsigned int *st)
                         media_formats_of_release(lib, sqlite3_column_int64(rs, 0)));
             mp_json_str_opt(it, "packageStatus", col_text(rs, 11));
             mp_json_str_opt(it, "verifyStatus", col_text(rs, 12));
+            if (sqlite3_column_int64(rs, 13) > 0) {
+                char url[64];
+                mp_json *art = mp_json_obj();
+                mp_json_int(art, "id", sqlite3_column_int64(rs, 13));
+                snprintf(url, sizeof url, "/api/%s/assets/%lld", API_VERSION,
+                         sqlite3_column_int64(rs, 13));
+                mp_json_str(art, "url", url);
+                mp_json_add(it, "artwork", art);
+            }
             mp_json_add(rel, 0, it);
         }
         mp_json_add(o, "releases", rel);
@@ -620,6 +827,8 @@ track_object(mp_library *lib, sqlite3_stmt *t)
         mp_json_dbl(l, "truePeakDb", sqlite3_column_double(t, 6));
         mp_json_add(o, "loudness", l);
     }
+    if (sqlite3_column_int(t, 15))
+        mp_json_dbl(o, "duration", sqlite3_column_double(t, 16));
     {
         mp_json *codec = mp_json_obj();
         mp_json_str(codec, "codec", col_text(t, 7));
@@ -659,6 +868,7 @@ handle_tracks(mp_library *lib, long long id, unsigned int *st)
             "  t.loudness_lufs, t.loudness_true_peak_db,"
             "  a.codec, a.mime_type, a.stream_version, a.sample_rate, a.channels,"
             "  a.id, a.file_size, a.sha256,"
+            "  t.has_duration, t.duration,"
             "  me.disc_number, g.id, g.title, r.id, r.edition"
             " FROM tracks t"
             " JOIN media me ON me.id = t.media_id"
@@ -680,11 +890,11 @@ handle_tracks(mp_library *lib, long long id, unsigned int *st)
     o = track_object(lib, t);
     {
         mp_json *ctx = mp_json_obj();
-        mp_json_int(ctx, "disc", sqlite3_column_int(t, 15));
-        mp_json_int(ctx, "albumId", sqlite3_column_int64(t, 16));
-        mp_json_str(ctx, "albumTitle", col_text(t, 17));
-        mp_json_int(ctx, "releaseId", sqlite3_column_int64(t, 18));
-        mp_json_str_opt(ctx, "releaseEdition", col_text(t, 19));
+        mp_json_int(ctx, "disc", sqlite3_column_int(t, 17));
+        mp_json_int(ctx, "albumId", sqlite3_column_int64(t, 18));
+        mp_json_str(ctx, "albumTitle", col_text(t, 19));
+        mp_json_int(ctx, "releaseId", sqlite3_column_int64(t, 20));
+        mp_json_str_opt(ctx, "releaseEdition", col_text(t, 21));
         mp_json_add(o, "context", ctx);
     }
     sqlite3_finalize(t);
@@ -709,7 +919,9 @@ handle_release_detail(mp_library *lib, long long id, unsigned int *st)
             "  r.identity_confidence, r.source_type, r.source_store,"
             "  r.source_id, r.provenance_tool, r.provenance_tool_version,"
             "  r.notes, g.id, g.title, g.release_type, g.original_release_date,"
-            "  g.mbid, p.status, p.verify_status"
+            "  g.mbid, p.status, p.verify_status,"
+            "  r.has_album_loudness, r.album_lufs, r.album_true_peak_db,"
+            "  r.loudness_algorithm"
             " FROM releases r"
             " JOIN release_groups g ON g.id = r.group_id"
             " JOIN packages p ON p.release_id = r.id"
@@ -744,6 +956,13 @@ handle_release_detail(mp_library *lib, long long id, unsigned int *st)
     mp_json_str_opt(o, "notes", col_text(r, 15));
     mp_json_str_opt(o, "packageStatus", col_text(r, 21));
     mp_json_str_opt(o, "verifyStatus", col_text(r, 22));
+    if (sqlite3_column_int(r, 23)) {
+        mp_json *l = mp_json_obj();
+        mp_json_str_opt(l, "algorithm", col_text(r, 26));
+        mp_json_dbl(l, "albumLufs", sqlite3_column_double(r, 24));
+        mp_json_dbl(l, "albumTruePeakDb", sqlite3_column_double(r, 25));
+        mp_json_add(o, "loudness", l);
+    }
     {
         mp_json *g = mp_json_obj();
         mp_json_int(g, "id", sqlite3_column_int64(r, 16));
@@ -779,7 +998,8 @@ handle_release_detail(mp_library *lib, long long id, unsigned int *st)
                     "SELECT t.id, t.track_number, t.title, t.isrc,"
                     "  t.has_loudness, t.loudness_lufs, t.loudness_true_peak_db,"
                     "  a.codec, a.mime_type, a.stream_version, a.sample_rate,"
-                    "  a.channels, a.id, a.file_size, a.sha256"
+                    "  a.channels, a.id, a.file_size, a.sha256,"
+                    "  t.has_duration, t.duration"
                     " FROM tracks t JOIN audio_objects a ON a.track_id = t.id"
                     " WHERE t.media_id = ?1"
                     " ORDER BY t.track_number, t.id", -1, &t, 0) == SQLITE_OK) {
@@ -925,13 +1145,125 @@ handle_library_status(mp_server_ctx *srv, unsigned int *st)
     return library_status_response(srv, 200);
 }
 
+/* ---------- session routes (Phase 6) ------------------------------------ */
+
+/* POST /api/v1/session: exchange a validated bearer token for an HttpOnly
+   session cookie. The token is used once and never returned again. */
+static struct MHD_Response *
+handle_session_create(mp_server_ctx *srv, struct MHD_Connection *c,
+                      const char *body, size_t body_len, unsigned int *st)
+{
+    char secret[MP_SESSION_SECRET_MAX];
+    char token[MP_TOKEN_SECRET_MAX];
+    char setc[320];
+    mp_json *o;
+    char *s;
+    struct MHD_Response *r;
+
+    if (!session_token_from_body(body, body_len, token, sizeof token)) {
+        *st = 400;
+        return error_response(400, "invalid_request", "malformed session body");
+    }
+    if (mp_session_create(srv->lib, token, secret, sizeof secret)
+        != MUSICPACK_OK) {
+        *st = 401;
+        return error_response(401, "unauthorized",
+                              "invalid or expired token");
+    }
+    o = mp_json_obj();
+    mp_json_str(o, "status", "authenticated");
+    s = mp_json_render(o);
+    r = json_response(s, 200);
+    free(s);
+    mp_json_free(o);
+    if (r != 0) {
+        snprintf(setc, sizeof setc, "%s=%s; HttpOnly; SameSite=Strict;"
+                 " Path=/; Max-Age=%d%s", SESSION_COOKIE, secret,
+                 MP_SESSION_MAX_AGE_DAYS * 24 * 3600,
+                 request_is_secure(srv->cfg, c) ? "; Secure" : "");
+        MHD_add_response_header(r, "Set-Cookie", setc);
+    }
+    *st = 200;
+    return r;
+}
+
+/* DELETE /api/v1/session: logout. Always clears the cookie (idempotent) and
+   revokes the session when the cookie is still valid. Public so an expired
+   session can still be cleared. */
+static struct MHD_Response *
+handle_session_delete(mp_server_ctx *srv, struct MHD_Connection *c,
+                      unsigned int *st)
+{
+    const char *cookie =
+        MHD_lookup_connection_value(c, MHD_HEADER_KIND, "Cookie");
+    const char *val;
+    size_t len = 0;
+    struct MHD_Response *r;
+
+    val = cookie != 0 ? cookie_value(cookie, SESSION_COOKIE, &len) : 0;
+    if (val != 0 && len < MP_SESSION_SECRET_MAX) {
+        char secret[MP_SESSION_SECRET_MAX];
+        memcpy(secret, val, len);
+        secret[len] = '\0';
+        mp_session_revoke(srv->lib, secret);
+    }
+    r = MHD_create_response_from_buffer(0, 0, MHD_RESPMEM_PERSISTENT);
+    if (r != 0) {
+        MHD_add_response_header(r, "Set-Cookie",
+                                SESSION_COOKIE
+                                "=; HttpOnly; SameSite=Strict; Path=/;"
+                                " Max-Age=0");
+        MHD_add_response_header(r, "Cache-Control", "no-store");
+    }
+    *st = 204;
+    return r;
+}
+
+/* GET /api/v1/session: session probe (the request already passed auth).
+   Reports the session id when a session cookie was used. */
+static struct MHD_Response *
+handle_session_get(mp_library *lib, struct MHD_Connection *c,
+                   unsigned int *st)
+{
+    const char *cookie =
+        MHD_lookup_connection_value(c, MHD_HEADER_KIND, "Cookie");
+    const char *val;
+    size_t len = 0;
+    mp_json *o = mp_json_obj();
+    char *s;
+    struct MHD_Response *r;
+
+    val = cookie != 0 ? cookie_value(cookie, SESSION_COOKIE, &len) : 0;
+    if (val != 0 && len < MP_SESSION_SECRET_MAX) {
+        char secret[MP_SESSION_SECRET_MAX];
+        mp_session_row srow;
+        memcpy(secret, val, len);
+        secret[len] = '\0';
+        if (mp_session_authorize(lib, secret, &srow)) {
+            mp_json *so = mp_json_obj();
+            mp_json_int(so, "id", srow.id);
+            mp_json_str(so, "createdAt", srow.created_at);
+            mp_json_str(so, "expiresAt", srow.expires_at);
+            mp_json_add(o, "session", so);
+        }
+    }
+    mp_json_str(o, "status", "authenticated");
+    s = mp_json_render(o);
+    r = json_response(s, 200);
+    free(s);
+    mp_json_free(o);
+    *st = 200;
+    return r;
+}
+
 /* ---------- dispatch ----------------------------------------------------- */
 
 /* Routes the authenticated request. Authentication and CORS live in
    mp_api_handle so route handlers stay auth-agnostic. */
 static struct MHD_Response *
 dispatch(mp_server_ctx *srv, struct MHD_Connection *c, const char *method,
-         const char *url, unsigned int *status_out)
+         const char *url, const char *body, size_t body_len,
+         unsigned int *status_out)
 {
     mp_library *lib = srv->lib;
     char path[2048];
@@ -940,10 +1272,10 @@ dispatch(mp_server_ctx *srv, struct MHD_Connection *c, const char *method,
 
     *status_out = 200;
     if (strcmp(method, "GET") != 0 && strcmp(method, "HEAD") != 0 &&
-        strcmp(method, "POST") != 0) {
+        strcmp(method, "POST") != 0 && strcmp(method, "DELETE") != 0) {
         *status_out = 405;
         return error_response(405, "unsupported_method",
-                              "only GET, HEAD and POST are supported");
+                              "only GET, HEAD, POST and DELETE are supported");
     }
     if (url == 0 || strlen(url) >= sizeof path) {
         *status_out = 400;
@@ -957,20 +1289,55 @@ dispatch(mp_server_ctx *srv, struct MHD_Connection *c, const char *method,
     if (strcmp(path, "/api/v1/health") == 0)
         return handle_health(lib);
 
-    /* ---- everything under /api/v1 except health requires a token ---- */
+    /* ---- session routes: create/logout are public ---------------------- */
+    if (strcmp(path, "/api/v1/session") == 0) {
+        if (strcmp(method, "POST") == 0) {
+            if (body == 0 || body_len == 0) {
+                *status_out = 400;
+                return error_response(400, "invalid_request",
+                                      "a JSON body with the bearer token is "
+                                      "required");
+            }
+            return handle_session_create(srv, c, body, body_len, status_out);
+        }
+        if (strcmp(method, "DELETE") == 0)
+            return handle_session_delete(srv, c, status_out);
+        if (strcmp(method, "GET") == 0)
+            return handle_session_get(lib, c, status_out);
+        *status_out = 405;
+        return error_response(405, "unsupported_method",
+                              "use POST, GET or DELETE for sessions");
+    }
+
+    /* ---- everything else under /api/v1 except health requires a token
+       (bearer header) or a valid session cookie ---- */
     {
         const char *auth = MHD_lookup_connection_value(c, MHD_HEADER_KIND,
                                                        "Authorization");
-        mp_token_row row;
-        if (auth == 0 || strncasecmp(auth, "Bearer ", 7) != 0) {
-            *status_out = 401;
-            return error_response(401, "unauthorized",
-                                  "missing bearer token");
+        int ok = 0;
+        if (auth != 0 && strncasecmp(auth, "Bearer ", 7) == 0) {
+            mp_token_row row;
+            ok = mp_token_authorize(lib, auth + 7, &row);
+        } else {
+            const char *cookie = MHD_lookup_connection_value(c,
+                                        MHD_HEADER_KIND, "Cookie");
+            const char *val;
+            size_t len = 0;
+            val = cookie != 0
+                ? cookie_value(cookie, SESSION_COOKIE, &len) : 0;
+            if (val != 0 && len < MP_SESSION_SECRET_MAX) {
+                char secret[MP_SESSION_SECRET_MAX];
+                mp_session_row srow;
+                memcpy(secret, val, len);
+                secret[len] = '\0';
+                ok = mp_session_authorize(lib, secret, &srow);
+            }
         }
-        if (!mp_token_authorize(lib, auth + 7, &row)) {
+        if (!ok) {
             *status_out = 401;
             return error_response(401, "unauthorized",
-                                  "invalid, expired or revoked token");
+                                  "missing, invalid, expired or revoked "
+                                  "credentials");
         }
     }
 
@@ -1060,10 +1427,11 @@ dispatch(mp_server_ctx *srv, struct MHD_Connection *c, const char *method,
 }
 
 /* Public entry: CORS gate, then dispatch. Authentication for the API routes
-   happens inside dispatch (health is public). */
+   happens inside dispatch (health + session create/logout are public). */
 struct MHD_Response *
 mp_api_handle(mp_server_ctx *srv, struct MHD_Connection *c, const char *method,
-              const char *url, unsigned int *status_out)
+              const char *url, const char *body, size_t body_len,
+              unsigned int *status_out)
 {
     const char *origin = MHD_lookup_connection_value(c, MHD_HEADER_KIND,
                                                      "Origin");
@@ -1090,19 +1458,23 @@ mp_api_handle(mp_server_ctx *srv, struct MHD_Connection *c, const char *method,
         MHD_add_response_header(resp, MHD_HTTP_HEADER_ACCESS_CONTROL_ALLOW_ORIGIN,
                                 origin);
         MHD_add_response_header(resp, "Access-Control-Allow-Methods",
-                                "GET, HEAD, POST, OPTIONS");
+                                "GET, HEAD, POST, DELETE, OPTIONS");
         MHD_add_response_header(resp, "Access-Control-Allow-Headers",
                                 "Authorization, Content-Type");
+        MHD_add_response_header(resp, "Access-Control-Allow-Credentials",
+                                "true");
         MHD_add_response_header(resp, "Access-Control-Max-Age", "600");
         MHD_add_response_header(resp, "Vary", "Origin");
         *status_out = 204;
         return resp;
     }
-    resp = dispatch(srv, c, method, url, status_out);
+    resp = dispatch(srv, c, method, url, body, body_len, status_out);
     if (resp != 0 && cors_ok) {
         MHD_add_response_header(resp,
                                 MHD_HTTP_HEADER_ACCESS_CONTROL_ALLOW_ORIGIN,
                                 origin);
+        MHD_add_response_header(resp, "Access-Control-Allow-Credentials",
+                                "true");
         MHD_add_response_header(resp, "Vary", "Origin");
     }
     return resp;

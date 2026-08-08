@@ -22,6 +22,7 @@ mp_config_defaults(mp_config *c)
     c->verify_on_scan = 0;
     c->no_scan = 0;
     c->allow_origin_count = 0;
+    c->secure_cookies = 0;
 }
 
 void

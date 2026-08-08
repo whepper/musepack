@@ -48,6 +48,7 @@
 #include "mime.h"
 #include "range.h"
 #include "scanner.h"
+#include "sessions.h"
 #include "tokens.h"
 
 #include <musicpack/musicpack.h>
@@ -277,10 +278,10 @@ test_migrations(void)
     char err[256];
     snprintf(dbpath, sizeof dbpath, "%s/mig.db", g_tmpdir);
     CHECK(mp_db_open(&db, dbpath, 1, err, sizeof err) == 0, "open fresh db");
-    CHECK(db != 0 && mp_db_schema_version(db) == 2, "schema version 2");
+    CHECK(db != 0 && mp_db_schema_version(db) == 3, "schema version 3");
     mp_db_close(db);
     CHECK(mp_db_open(&db, dbpath, 1, err, sizeof err) == 0, "reopen db");
-    CHECK(mp_db_schema_version(db) == 2, "version stable on reopen");
+    CHECK(mp_db_schema_version(db) == 3, "version stable on reopen");
     mp_db_close(db);
     CHECK(mp_db_open(&db, dbpath, 0, err, sizeof err) == 0, "open read-only");
     mp_db_close(db);
@@ -596,6 +597,87 @@ test_tokens(void)
     mp_library_close(lib);
 }
 
+static void
+test_sessions(void)
+{
+    char dbpath[4096], libdir[4096], pkg[4096];
+    mp_library *lib;
+    char tok[MP_TOKEN_SECRET_MAX];
+    char sess[MP_SESSION_SECRET_MAX];
+    char bad[MP_SESSION_SECRET_MAX];
+    long long id = -1;
+    mp_session_row srow;
+    mp_scan_result res;
+    sqlite3 *db;
+
+    snprintf(dbpath, sizeof dbpath, "%s/sess.db", g_tmpdir);
+    snprintf(libdir, sizeof libdir, "%s/sesslib", g_tmpdir);
+    make_dir(libdir);
+    snprintf(pkg, sizeof pkg, "%s/Good.mpack", libdir);
+    copy_tree(g_ref_mpc, pkg);
+
+    lib = mp_library_open(dbpath, 1, 0, 0);
+    CHECK(lib != 0, "open session db");
+    db = mp_library_sqlite(lib);
+
+    /* canonical album loudness is persisted from the manifest */
+    CHECK(mp_scan_library(lib, libdir, 0, &res, 0, 0) == MUSICPACK_OK,
+          "scan for loudness");
+    CHECK(res.added == 1, "one package for loudness");
+    CHECK(count_rows(db, "SELECT COUNT(*) FROM releases "
+        "WHERE has_album_loudness = 1 AND loudness_algorithm = 'ITU-R BS.1770-5'",
+        -1) == 1, "album loudness + algorithm persisted");
+    {
+        sqlite3_stmt *st;
+        if (sqlite3_prepare_v2(db, "SELECT album_lufs, album_true_peak_db"
+                                 " FROM releases WHERE has_album_loudness = 1",
+                                 -1, &st, 0) == SQLITE_OK) {
+            if (sqlite3_step(st) == SQLITE_ROW) {
+                CHECK(sqlite3_column_double(st, 0) > -8.0 &&
+                      sqlite3_column_double(st, 0) < -7.0,
+                      "album LUFS within fixture range");
+                CHECK(sqlite3_column_double(st, 1) < 0.0,
+                      "album true peak negative (below full scale)");
+            }
+            sqlite3_finalize(st);
+        }
+    }
+
+    /* session create: valid token -> cookie secret; invalid -> reject */
+    CHECK(mp_token_create(lib, "Web", tok, sizeof tok, &id) == MUSICPACK_OK,
+          "create session token");
+    CHECK(mp_session_create(lib, tok, sess, sizeof sess) == MUSICPACK_OK,
+          "exchange token for session");
+    CHECK(strlen(sess) >= 40, "session secret shape");
+    CHECK(count_query(db, "SELECT COUNT(*) FROM sessions", 0) == 1,
+          "one session row");
+    CHECK(count_query(db,
+        "SELECT COUNT(*) FROM sessions WHERE session_hash = ?1", sess) == 0,
+        "plaintext session secret never stored");
+
+    mp_session_secret_generate(bad, sizeof bad);
+    CHECK(mp_session_authorize(lib, sess, &srow) == 1, "authorize session");
+    CHECK(mp_session_authorize(lib, bad, &srow) == 0, "reject bad session");
+    CHECK(mp_session_authorize(lib, "", &srow) == 0, "reject empty session");
+
+    /* session inherits token revocation */
+    CHECK(mp_token_revoke(lib, id) == 1, "revoke token");
+    CHECK(mp_session_authorize(lib, sess, &srow) == 0,
+          "revoked token invalidates its sessions");
+
+    /* fresh session so logout has something to revoke */
+    CHECK(mp_token_create(lib, "Web2", tok, sizeof tok, 0) == MUSICPACK_OK,
+          "create second token");
+    CHECK(mp_session_create(lib, tok, sess, sizeof sess) == MUSICPACK_OK,
+          "exchange second token");
+    CHECK(mp_session_revoke(lib, sess) == 1, "logout revokes session");
+    CHECK(mp_session_revoke(lib, sess) == 0, "logout idempotent");
+    CHECK(mp_session_authorize(lib, sess, &srow) == 0,
+          "revoked session rejected");
+
+    mp_library_close(lib);
+}
+
 static int g_progress_calls = 0;
 static void
 progress_cb(void *ctx, const mp_scan_result *partial)
@@ -687,6 +769,7 @@ main(int argc, char **argv)
     test_identity(g_ref_mpc);
     test_mime();
     test_tokens();
+    test_sessions();
     test_verify();
     test_scanner();
 

@@ -4,13 +4,14 @@ This document is the human-readable specification for the MusicPack server's
 HTTP API (`musicpack-server`). API versioning is **independent** of `.mpack`
 manifest versioning (`specs/musicpack-v1.md`).
 
-Status: **v1** (Phase 5). Read-only library API behind bearer-token
-authentication, with live scan/verify operations.
+Status: **v1** (Phase 6). Read-only library API behind bearer-token or
+session-cookie authentication, with live scan/verify operations and the
+browser-session layer for the first-party web client.
 
 ## 0. Authentication
 
-All `/api/v1/*` endpoints require a bearer token **except** `GET
-/api/v1/health` (used for liveness probes).
+All `/api/v1/*` endpoints require credentials **except** `GET
+/api/v1/health` (liveness) and the session create/logout routes.
 
 ```http
 Authorization: Bearer mpk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
@@ -24,10 +25,11 @@ Authorization: Bearer mpk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
   `403` is reserved and used for disallowed CORS origins).
 - Tokens are managed with the CLI:
   `musicpack-server token create --name "Web" | token list | token revoke <id>`.
-- The reference demo keeps the token in memory only (never localStorage) and
-  sends it as `Authorization: Bearer` on every request.
+- Bearer tokens remain the API surface for CLI/native clients. The first-party
+  web client authenticates once with a bearer token and then uses an
+  **HttpOnly session cookie** (see §0.2).
 
-## 0.1 CORS
+### 0.1 CORS
 
 Restrictive by default. No `Access-Control-Allow-Origin: *`; when
 authentication is involved, CORS is granted only to origins explicitly listed
@@ -40,7 +42,41 @@ with `--allow-origin URL` (repeatable).
   `Access-Control-Allow-Headers: Authorization, Content-Type`.
 - Same-origin and no-Origin clients are unaffected.
 
-## 0.2 Live library maintenance
+## 0.2 Sessions (browser cookie layer)
+
+The web client proves possession of a bearer token once; the server exchanges
+it for an opaque session secret delivered as an **HttpOnly cookie**. The
+browser app never holds a permanent token.
+
+```http
+POST /api/v1/session      # body {"token": "mpk_..."}  -> Set-Cookie
+GET  /api/v1/session      # probe (authenticated)       -> {"status":"authenticated", ...}
+DELETE /api/v1/session    # logout (public, idempotent) -> 204 + cleared cookie
+```
+
+- The exchange only succeeds for a currently-valid bearer token (`401`
+  otherwise). Malformed JSON → `400 invalid_request`.
+- The session secret is 256-bit random, base64url, and **only its SHA-256 is
+  stored**, keyed to the underlying token's hash. A session therefore inherits
+  the token's validity: revoking or expiring the token invalidates its
+  sessions.
+- Cookie attributes: `HttpOnly; SameSite=Strict; Path=/; Max-Age=2592000`
+  (30 days, sliding). `Secure` is added when the request arrived over HTTPS
+  (`X-Forwarded-Proto: https` behind a reverse proxy) or when the server is
+  started with `--secure-cookies`.
+- CSRF is mitigated by `SameSite=Strict` (the only state-changing endpoints
+  are scan/verify/session, and cross-site requests never carry the cookie).
+- The auth middleware accepts `Authorization: Bearer` **or** the session
+  cookie. Health and session create/logout are public.
+
+## 0.3 CORS (Phase 6 notes)
+
+`Access-Control-Allow-Methods` now includes `DELETE`; preflight responses set
+`Access-Control-Allow-Credentials: true` for explicitly allowed origins
+(cross-site cookie use still requires `SameSite=None`-style handling, which
+the server does not emit; cookie sessions are intended same-origin).
+
+## 0.4 Live library maintenance
 
 ```http
 POST /api/v1/library/scan        # rescan the library (one worker, idempotent)
@@ -81,7 +117,8 @@ characters, value ≤ 2^63−1. Anything else is a `400 invalid_request`.
 
 ### Methods
 
-`GET` and `HEAD` only. Anything else is `405 unsupported_method`.
+`GET`, `HEAD`, `POST` (library maintenance, session create) and `DELETE`
+(session logout). Anything else is `405 unsupported_method`.
 
 ### Pagination
 
@@ -98,9 +135,15 @@ List endpoints support:
 List ordering is deterministic:
 
 - `albums`: album artist (first artist), then title (case-insensitive), then
-  original release date
+  original release date; `?sort=recent` reorders by scan/creation time
+  descending
 - `artists`: name (case-insensitive)
 - nested `releases` within an album: release date, then id
+
+### Search
+
+`/albums` and `/artists` accept `?q=TEXT` (case-insensitive substring match on
+title/artist-name; `%`/`_`/`\` in the query are treated literally).
 
 ### Errors
 
@@ -151,12 +194,16 @@ List of release groups (albums). Collector model: editions are never merged.
       "releaseType": "album",
       "originalReleaseDate": "1986-06-16",
       "artists": [ { "id": 1, "name": "Artist", "role": "main" } ],
-      "releaseCount": 2
+      "releaseCount": 2,
+      "artwork": { "id": 7, "url": "/api/v1/assets/7" }
     }
   ],
   "limit": 50, "offset": 0, "total": 1
 }
 ```
+
+`artwork` is the front cover of the album's earliest visible release (when any
+release has one); it is omitted when the album has no artwork.
 
 ### `GET /api/v1/albums/{id}`
 
@@ -172,6 +219,7 @@ List of release groups (albums). Collector model: editions are never merged.
       "id": 10, "edition": "Original European CD", "releaseDate": "1986-06-16",
       "country": "DE", "label": "X", "catalogueNumber": "Y", "barcode": "…",
       "media": ["CD"], "trackCount": 12,
+      "artwork": { "id": 7, "url": "/api/v1/assets/7" },
       "packageStatus": "valid", "verifyStatus": "unverified"
     }
   ]
@@ -180,7 +228,9 @@ List of release groups (albums). Collector model: editions are never merged.
 
 `releases[]` shows the distinct editions; a client renders
 `Album └── N versions`. `media` is the list of distinct medium formats
-(`["CD"]`, `["CD", "Digital"]`, `["Digital"]`).
+(`["CD"]`, `["CD", "Digital"]`, `["Digital"]`). `artwork` is the front cover
+of that specific release (edition switching can swap covers without a second
+request).
 
 ### `GET /api/v1/releases/{id}`
 
@@ -195,6 +245,8 @@ barcode, notes, mbid, identity/source/provenance) plus `packageStatus` /
   "edition": "2016 Remaster",
   "releaseDate": "2016-09-23",
   "album": { "id": 2, "title": "Example Album", "artists": [ ... ] },
+  "loudness": { "algorithm": "ITU-R BS.1770-5",
+                "albumLufs": -7.28, "albumTruePeakDb": -4.19 },
   "media": [
     {
       "disc": 1, "format": "CD",
@@ -203,6 +255,7 @@ barcode, notes, mbid, identity/source/provenance) plus `packageStatus` /
           "id": 55, "number": 1, "title": "Track",
           "artists": [ { "id": 1, "name": "Artist" } ],
           "isrc": "…",
+          "duration": 321.4,
           "loudness": { "lufs": -7.19, "truePeakDb": -4.18 },
           "codec": {
             "codec": "musepack-sv8", "mimeType": "audio/musepack",
@@ -222,6 +275,11 @@ barcode, notes, mbid, identity/source/provenance) plus `packageStatus` /
   "packageStatus": "valid", "verifyStatus": "unverified"
 }
 ```
+
+`loudness` carries the package's canonical album-level BS.1770-5 measurement
+(stored from the manifest, never recomputed). Track `duration` is seconds from
+the manifest when present. These power the client's Album/Track normalization
+without inventing new package semantics.
 
 ### `GET /api/v1/tracks/{id}`
 
@@ -343,13 +401,20 @@ manifest (derived, not canonical).
 - Strict numeric parsing for ids and ranges; bounded paths/pagination;
   connection limits, per-IP limits and idle timeouts on the server.
 - Tokens: 256-bit CSPRNG secrets, only SHA-256 stored, constant-time
-  verification, revocable, never logged.
-- `extras/` is indexed but not served; the static demo directory
+  verification, revocable, never logged. Sessions: the same model over the
+  token hash; session secrets are HttpOnly cookies, only SHA-256 stored, and
+  inherit token revocation/expiry.
+- `extras/` is indexed but not served; the static directory
   (`--static-dir`) serves only files under that directory and is never backed
-  by library packages.
-- The reference demo is served from the server's origin with
-  `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy:
-  require-corp` (cross-origin isolation for the SharedArrayBuffer reader).
+  by library packages. Unknown extension-less GET paths under the static
+  directory fall back to `index.html` (SPA deep links); `/api/` is never
+  routed to the static handler, and asset paths with an extension still 404.
+- The static directory is served with `Cross-Origin-Opener-Policy:
+  same-origin` and `Cross-Origin-Embedder-Policy: require-corp`
+  (cross-origin isolation for the SharedArrayBuffer reader).
+- The first-party web client is served from the server's origin and carries a
+  Content-Security-Policy in its own `index.html`; the server does not emit
+  `unsafe-*` directives.
 - Deployment: Phase 5 is local/trusted-network; for remote access put the
   server behind a TLS-terminating reverse proxy or tunnel (the server stays
   privately bound). No TLS is implemented by the server itself.

@@ -153,7 +153,27 @@ static const char *const mp_migrations[] = {
 "  created_at TEXT NOT NULL DEFAULT (datetime('now')),"
 "  last_used_at TEXT,"
 "  expires_at TEXT,"
+"  revoked_at TEXT);",
+
+/* 2 -> 3: browser sessions + canonical album loudness (Phase 6).
+   A session is an opaque 256-bit secret (only its SHA-256 stored) that the
+   server exchanges a validated bearer token for; the browser app keeps only
+   the resulting HttpOnly cookie. Sessions inherit a token's expiry/revocation
+   through the token_hash FK. The release gets the .mpack album-level
+   BS.1770-5 values so the client can apply canonical album normalization. */
+"ALTER TABLE releases ADD COLUMN album_lufs REAL;"
+"ALTER TABLE releases ADD COLUMN album_true_peak_db REAL;"
+"ALTER TABLE releases ADD COLUMN has_album_loudness INTEGER NOT NULL DEFAULT 0;"
+"ALTER TABLE releases ADD COLUMN loudness_algorithm TEXT;"
+"CREATE TABLE sessions ("
+"  id INTEGER PRIMARY KEY,"
+"  session_hash TEXT NOT NULL UNIQUE,"
+"  token_hash TEXT NOT NULL REFERENCES tokens(token_hash) ON DELETE CASCADE,"
+"  created_at TEXT NOT NULL DEFAULT (datetime('now')),"
+"  last_used_at TEXT,"
+"  expires_at TEXT,"
 "  revoked_at TEXT);"
+"CREATE INDEX sessions_token_idx ON sessions(token_hash);"
 };
 
 const char *const *

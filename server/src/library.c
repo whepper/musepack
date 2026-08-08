@@ -371,8 +371,11 @@ mp_library_upsert_release(mp_library *lib, const musicpack_manifest *m,
             "INSERT INTO releases(group_id, edition, release_date, country,"
             "  label, catalogue_number, notes, barcode, mbid, release_key,"
             "  source_type, source_store, source_id, identity_source,"
-            "  identity_confidence, provenance_tool, provenance_tool_version)"
-            " VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)");
+            "  identity_confidence, provenance_tool, provenance_tool_version,"
+            "  album_lufs, album_true_peak_db, has_album_loudness,"
+            "  loudness_algorithm)"
+            " VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,"
+            " ?17,?18,?19,?20,?21)");
         if (st == 0)
             return -1;
         sqlite3_bind_int64(st, 1, group_id);
@@ -395,6 +398,10 @@ mp_library_upsert_release(mp_library *lib, const musicpack_manifest *m,
         sqlite3_bind_text(st, 16, m->provenance_tool, -1, SQLITE_TRANSIENT);
         sqlite3_bind_text(st, 17, m->provenance_tool_version, -1,
                           SQLITE_TRANSIENT);
+        sqlite3_bind_double(st, 18, m->album_loudness.lufs);
+        sqlite3_bind_double(st, 19, m->album_loudness.true_peak_db);
+        sqlite3_bind_int(st, 20, m->has_album_loudness);
+        sqlite3_bind_text(st, 21, m->loudness_algorithm, -1, SQLITE_TRANSIENT);
         if (sqlite3_step(st) != SQLITE_DONE) {
             sqlite3_finalize(st);
             return -1;
@@ -408,7 +415,8 @@ mp_library_upsert_release(mp_library *lib, const musicpack_manifest *m,
             " source_type=?10, source_store=?11, source_id=?12,"
             " identity_source=?13, identity_confidence=?14,"
             " provenance_tool=?15, provenance_tool_version=?16,"
-            " updated_at=datetime('now') WHERE id=?1");
+            " album_lufs=?17, album_true_peak_db=?18, has_album_loudness=?19,"
+            " loudness_algorithm=?20, updated_at=datetime('now') WHERE id=?1");
         if (st == 0)
             return -1;
         sqlite3_bind_int64(st, 1, id);
@@ -430,6 +438,10 @@ mp_library_upsert_release(mp_library *lib, const musicpack_manifest *m,
         sqlite3_bind_text(st, 15, m->provenance_tool, -1, SQLITE_TRANSIENT);
         sqlite3_bind_text(st, 16, m->provenance_tool_version, -1,
                           SQLITE_TRANSIENT);
+        sqlite3_bind_double(st, 17, m->album_loudness.lufs);
+        sqlite3_bind_double(st, 18, m->album_loudness.true_peak_db);
+        sqlite3_bind_int(st, 19, m->has_album_loudness);
+        sqlite3_bind_text(st, 20, m->loudness_algorithm, -1, SQLITE_TRANSIENT);
         sqlite3_step(st);
         sqlite3_finalize(st);
     }

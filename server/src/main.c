@@ -53,6 +53,7 @@ usage(void)
         "  --no-scan         serve without a startup scan\n"
         "  --static-dir DIR  serve the reference demo/static files under DIR\n"
         "  --allow-origin URL  allow a CORS origin (repeatable; default none)\n"
+        "  --secure-cookies  always send Secure on session cookies (HTTPS)\n"
         "token options:\n"
         "  --name NAME       token display name (token create)\n");
 }
@@ -60,7 +61,7 @@ usage(void)
 enum {
     OPT_LIBRARY = 1000, OPT_DATABASE, OPT_LISTEN, OPT_PORT,
     OPT_VERIFY, OPT_NO_SCAN, OPT_HELP, OPT_VERSION, OPT_STATIC_DIR,
-    OPT_ALLOW_ORIGIN, OPT_NAME,
+    OPT_ALLOW_ORIGIN, OPT_NAME, OPT_SECURE_COOKIES,
 };
 
 static const struct option long_opts[] = {
@@ -72,6 +73,7 @@ static const struct option long_opts[] = {
     { "no-scan", no_argument, 0, OPT_NO_SCAN },
     { "static-dir", required_argument, 0, OPT_STATIC_DIR },
     { "allow-origin", required_argument, 0, OPT_ALLOW_ORIGIN },
+    { "secure-cookies", no_argument, 0, OPT_SECURE_COOKIES },
     { "name", required_argument, 0, OPT_NAME },
     { "help", no_argument, 0, OPT_HELP },
     { "version", no_argument, 0, OPT_VERSION },
@@ -99,6 +101,7 @@ parse_options(int argc, char **argv, mp_config *cfg)
                 fprintf(stderr, "musicpack-server: too many --allow-origin values (max %d)\n",
                         MP_ALLOW_ORIGIN_MAX);
             break;
+        case OPT_SECURE_COOKIES: cfg->secure_cookies = 1; break;
         case OPT_NAME: g_token_name = optarg; break;
         case OPT_HELP: usage(); exit(0);
         case OPT_VERSION:
