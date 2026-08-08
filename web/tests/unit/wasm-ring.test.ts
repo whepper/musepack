@@ -1,11 +1,12 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { createRequire } from 'node:module';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { readFileSync } from 'node:fs';
 import { RingBuffer } from '../../app/src/lib/playback/ring-buffer';
 
 const require = createRequire(import.meta.url);
-const ROOT = path.resolve(import.meta.dirname, '../../..');
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 
 let wasm: (() => Promise<Record<string, any>>) | null = null;
 let fixtureA: string | null = null;
@@ -37,11 +38,11 @@ async function decodeAll(Module: Record<string, any>, h: number, channels: numbe
   const pcmPtr = Module._malloc(1152 * channels * 4);
   const out: number[] = [];
   for (;;) {
-    const frames = await Module._mpc_wasm_read(h, pcmPtr, 1152);
+    const frames = (await Module._mpc_wasm_read(h, pcmPtr, 1152)) as number;
     if (frames < 0) break; // EOF
     if (frames === 0) break;
     const view = new Float32Array(Module.HEAPF32.buffer, pcmPtr, frames * channels);
-    for (let i = 0; i < view.length; i++) out.push(view[i]);
+    for (let i = 0; i < view.length; i++) out.push(view[i] ?? 0);
   }
   Module._free(pcmPtr);
   return Float32Array.from(out);

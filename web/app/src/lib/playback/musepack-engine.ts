@@ -2,7 +2,11 @@
 // (with its bounded ring), and TWO decoder workers so the next track is
 // already opened when the current one ends (gapless). The playback controller
 // drives it; the UI never touches it directly.
-import workletUrl from './audio-worklet.ts?url';
+// The PCM AudioWorklet. In dev Vite serves the TS source transformed; in the
+// production build it is bundled to /assets/worklet.js (see vite.config.ts).
+const WORKLET_URL = import.meta.env.PROD
+  ? '/assets/worklet.js'
+  : '/src/lib/playback/audio-worklet.ts';
 import type { WorkletReport } from './worklet-protocol';
 
 export interface EngineStreamInfo {
@@ -55,7 +59,7 @@ export class MusepackEngine {
     this.ctx = new AudioContext();
     this.gain = this.ctx.createGain();
     this.gain.connect(this.ctx.destination);
-    await this.ctx.audioWorklet.addModule(workletUrl);
+    await this.ctx.audioWorklet.addModule(WORKLET_URL);
     this.node = new AudioWorkletNode(this.ctx, 'musicpack-pcm');
     this.node.connect(this.gain);
     this.node.port.onmessage = (ev: MessageEvent<WorkletReport>) => {

@@ -32,9 +32,19 @@ export default defineConfig({
     emptyOutDir: true,
     target: 'es2022',
     sourcemap: false,
-    // Emit worklet/worker entries as real files (same-origin, CSP-clean);
-    // never inline as data: URIs.
+    // Emit the AudioWorklet as a bundled entry (imports inlined) at a fixed
+    // URL the engine references; never inline anything as data: URIs.
     assetsInlineLimit: 0,
+    rollupOptions: {
+      input: {
+        main: 'app/index.html',
+        worklet: 'app/src/lib/playback/audio-worklet.ts',
+      },
+      output: {
+        entryFileNames: (chunk) =>
+          chunk.name === 'worklet' ? 'assets/worklet.js' : 'assets/[name]-[hash].js',
+      },
+    },
   },
   test: {
     environment: 'node',

@@ -4,18 +4,18 @@ import { fmtTime, yearOf, formatDate, countryName, mediumLabel, collectorLine } 
 
 describe('router', () => {
   it('parses all route shapes', () => {
-    expect(parseRoute('/').name).toBe('albums');
-    expect(parseRoute('/albums').name).toBe('albums');
+    expect(parseRoute('/')?.name).toBe('albums');
+    expect(parseRoute('/albums')?.name).toBe('albums');
     expect(parseRoute('/albums/42')).toMatchObject({ name: 'album', params: { id: '42' } });
-    expect(parseRoute('/albums/42?release=7').query.get('release')).toBe('7');
-    expect(parseRoute('/artists').name).toBe('artists');
+    expect(parseRoute('/albums/42?release=7')?.query.get('release')).toBe('7');
+    expect(parseRoute('/artists')?.name).toBe('artists');
     expect(parseRoute('/artists/3')).toMatchObject({ name: 'artist', params: { id: '3' } });
-    expect(parseRoute('/queue').name).toBe('queue');
+    expect(parseRoute('/queue')?.name).toBe('queue');
   });
 
   it('rejects non-numeric ids and unknown routes', () => {
     expect(parseRoute('/albums/abc')?.name).toBe('notfound');
-    expect(parseRoute('/admin').name).toBe('notfound');
+    expect(parseRoute('/admin')?.name).toBe('notfound');
   });
 });
 

@@ -9,3 +9,4 @@ app/public/networker.js
 test-results/
 playwright-report/
 .tmp/
+tests/e2e/.server-env.json

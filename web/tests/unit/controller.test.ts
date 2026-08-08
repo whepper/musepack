@@ -84,7 +84,7 @@ class FakeBackend implements Backend {
   getServedBytes() {
     return 0;
   }
-  close() {}
+  async close() {}
 
   // test drivers
   setRendered(frames: number) {
