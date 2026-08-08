@@ -68,6 +68,7 @@
 
     return {
       pos: () => readerPos,
+      served: () => Atomics.load(state, M.SERVED),
       lastError: () => lastError,
       close: () => {
         networker.terminate();

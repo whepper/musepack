@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MusicPack</title>
+  <meta name="description" content="Your digital record shelf — browse, choose an edition, and play your collection.">
+  <!-- Strict CSP: no unsafe-eval/unsafe-inline beyond what the WASM decoder
+       requires. Workers + the AudioWorklet module come from self. -->
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self';
+                 script-src 'self' 'wasm-unsafe-eval';
+                 worker-src 'self';
+                 connect-src 'self';
+                 img-src 'self' data:;
+                 style-src 'self';
+                 font-src 'self';
+                 media-src 'self' blob:;
+                 object-src 'none';
+                 base-uri 'none';
+                 form-action 'none'">
+  <meta name="theme-color" content="#f7f3ec">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <div id="app"></div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

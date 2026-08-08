@@ -1,0 +1,33 @@
+{
+  "name": "musicpack-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "MusicPack Phase 6 web client — the digital record shelf",
+  "scripts": {
+    "sync:wasm": "bash scripts/sync-wasm.sh",
+    "dev": "npm run sync:wasm && vite",
+    "build": "npm run sync:wasm && vite build",
+    "preview": "vite preview",
+    "check": "svelte-check --tsconfig ./tsconfig.json",
+    "test:unit": "vitest run --dir tests/unit",
+    "test:node": "node tests/node/run.mjs",
+    "test:e2e": "playwright test",
+    "test": "npm run test:unit && npm run test:node"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.50.1",
+    "@sveltejs/vite-plugin-svelte": "^5.0.3",
+    "@tsconfig/svelte": "^5.0.4",
+    "svelte": "^5.20.0",
+    "svelte-check": "^4.1.4",
+    "typescript": "^5.7.3",
+    "vite": "^6.1.0",
+    "vitest": "^3.0.5"
+  },
+  "allowScripts": {
+    "esbuild@0.25.12": true,
+    "fsevents@2.3.2": true,
+    "fsevents@2.3.3": true
+  }
+}

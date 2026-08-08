@@ -7,6 +7,17 @@ if(EMSCRIPTEN)
   add_test(NAME wasm_smoke
            COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/run_wasm_smoke.sh
                    ${CMAKE_BINARY_DIR})
+  # Phase 6: the web client's audio guarantees against the real wasm decoder —
+  # gapless two-track continuity, exact track-end frames, demand-reader seek
+  # accounting (seeking never downloads the whole file). Needs Node 22.6+
+  # (the harness is plain .mjs with no TS imports).
+  add_test(NAME web_wasm_gapless
+           COMMAND node
+                   ${CMAKE_CURRENT_SOURCE_DIR}/../web/tests/node/wasm-gapless.mjs
+                   ${CMAKE_BINARY_DIR}/wasm/musepack.js
+                   ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/sine44-q5.mpc
+                   ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/sine44-q7.mpc
+                   ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/sine44-q5-48s.mpc)
   return()
 endif()
 

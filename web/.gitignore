@@ -1,0 +1,11 @@
+# Web client build artifacts (generated + toolchain).
+node_modules/
+app/dist/
+app/public/musepack.js
+app/public/musepack.wasm
+app/public/reader_mailbox.js
+app/public/rangereader.js
+app/public/networker.js
+test-results/
+playwright-report/
+.tmp/
