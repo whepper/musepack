@@ -119,3 +119,59 @@ jobs:
         run: |
           source /opt/emsdk/emsdk_env.sh
           ctest --test-dir build-wasm -R "^wasm_smoke$" --output-on-failure
+
+  web-client:
+    name: web-client
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install libmicrohttpd
+        run: sudo apt-get update && sudo apt-get install -y libmicrohttpd-dev
+
+      - name: Install Emscripten
+        run: |
+          git clone --depth 1 https://github.com/emscripten-core/emsdk.git /opt/emsdk
+          /opt/emsdk/emsdk install latest
+          /opt/emsdk/emsdk activate latest
+
+      - name: Build server
+        run: |
+          cmake -S . -B build -DMPC_BUILD_TESTS=OFF
+          cmake --build build -j --target musicpack_server_cmd
+
+      - name: Build wasm module
+        shell: bash
+        run: |
+          source /opt/emsdk/emsdk_env.sh
+          emcmake cmake -S . -B build-wasm
+          cmake --build build-wasm -j --target musepack_wasm
+
+      - name: Install + build client
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+
+      - name: Type-check
+        working-directory: web
+        run: npx svelte-check --tsconfig ./tsconfig.json
+
+      - name: Unit tests (Vitest)
+        working-directory: web
+        run: npx vitest run
+
+      - name: Node wasm gapless harness
+        working-directory: web
+        run: node tests/node/wasm-gapless.mjs ../build-wasm/wasm/musepack.js ../tests/fixtures/sine44-q5.mpc ../tests/fixtures/sine44-q7.mpc ../tests/fixtures/sine44-q5-48s.mpc
+
+      - name: Browser tests (Playwright)
+        working-directory: web
+        run: |
+          npx playwright install --with-deps chromium
+          npx playwright test
