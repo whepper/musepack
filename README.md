@@ -130,6 +130,7 @@ security; it never parses manifests itself.
 musicpack-server scan    --library ~/Music [--database library.db] [--verify]
 musicpack-server serve   --library ~/Music [--listen 127.0.0.1] [--port 8080]
 musicpack-server verify  --library ~/Music
+musicpack-server token create --name "Web" | token list | token revoke <id>
 ```
 
 - **Scanner** — deterministic and idempotent; finds `.mpack` bundles (recursion
@@ -142,21 +143,34 @@ musicpack-server verify  --library ~/Music
 - **Collector library** — SQLite (vendored amalgamation) preserving the
   release-group → release/edition → media → track hierarchy, with artists,
   assets, package status, and schema migrations.
+- **Authentication** — `/api/v1/*` is protected by opaque bearer tokens
+  (256-bit secrets; only their SHA-256 is stored), except `GET
+  /api/v1/health`. Tokens are created/listed/revoked via the CLI. CORS is
+  deny-by-default (`--allow-origin URL`, repeatable).
+- **Live maintenance** — `POST /api/v1/library/scan` and `POST
+  /api/v1/library/verify` run on single background workers (SQLite WAL), so
+  playback and API reads continue and new state appears after each commit;
+  `GET /api/v1/library/status` reports current/last scan + verify state.
 - **HTTP API v1** — `GET /api/v1/health|albums|albums/{id}|releases/{id}|
   tracks/{id}|tracks/{id}/audio|artists|artists/{id}|assets/{id}`, with
   pagination, strict numeric ids, a JSON error envelope, and deterministic
   ordering. Editions are never collapsed: an album lists its distinct
   releases.
 - **Direct streaming** — audio/assets are served as the **original stored
-  bytes** (no decode/remux/rewrite) with full RFC 7233 single-range support
+  bytes** (no decode/remux/rewrite) with full RFC 9110 single-range support
   (`206`/`416`, `Content-Range`, `Accept-Ranges`, `HEAD`), streamed from a
   file descriptor — never buffered. The bytes served hash to the manifest's
-  `sha256`. MIME and codec (`musepack-sv8`, …) are reported separately and
+  `sha256`; a strong `ETag` (the manifest hash) enables `If-None-Match` →
+  `304`. MIME and codec (`musepack-sv8`, …) are reported separately and
   derived server-side.
+- **Browser streaming** — `--static-dir DIR` serves the reference demo with
+  cross-origin isolation (COOP/COEP); the demo plays a server track with a
+  demand-driven reader (SharedArrayBuffer + Atomics + a network worker with a
+  block cache), fetching only the compressed ranges the decoder needs.
 
 Defaults are safe: loopback binding, no remote access implied. The API spec
-is `specs/musicpack-api-v1.md`. The browser demo can play a server track over
-HTTP Range through the existing WASM decoder (`demo/README.md`).
+is `specs/musicpack-api-v1.md`. The browser demo is documented in
+`demo/README.md`.
 
 ## Tools
 
@@ -176,16 +190,18 @@ HTTP Range through the existing WASM decoder (`demo/README.md`).
 See `tests/README.md`. With `-DMPC_BUILD_TESTS=ON`, `ctest` runs twelve native
 suites: unit tests (crc32, bitstream, tables), the libmusepack API suite, the
 libmusicpack suite (manifest, paths, checksums, loudness meter, handoff), the
-server core suite (range parser, migrations, package identity, scanner
-behaviors — runs on all platforms), a fixture regression that pins decode
-output for bit-exactness, end-to-end integration, `.mpack` integration,
+server core suite (range parser, migrations, tokens, package identity, verify,
+scanner behaviors — runs on all platforms), a fixture regression that pins
+decode output for bit-exactness, end-to-end integration, `.mpack` integration,
 `.mpack` fuzz-lite, decoder robustness on malformed input, the server HTTP
-integration (API, streaming byte-identity, HTTP Range, concurrency, security
-boundaries — UNIX), and a compatibility check that pins the encoder to
+integration (auth matrix, CORS, live scan/verify/status, streaming
+byte-identity, HTTP Range, ETag/304, concurrency, security boundaries —
+UNIX), and a compatibility check that pins the encoder to
 bit-identical output with the pristine reference encoder (compared live
 against a reference build on CI, with a committed manifest as the local
 fallback). The Emscripten build registers an additional `wasm_smoke` suite
-(including the JS range-reader decode path):
+(including the demand-driven range-reader path: PCM identity, a seek-to-90%
+fetch-accounting check, and network-failure injection):
 
 ```sh
 cmake -S . -B build -DMPC_BUILD_TESTS=ON

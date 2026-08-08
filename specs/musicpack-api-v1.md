@@ -1,10 +1,70 @@
 # MusicPack HTTP API v1
 
 This document is the human-readable specification for the MusicPack server's
-read-only HTTP API (`musicpack-server`). API versioning is **independent** of
-`.mpack` manifest versioning (`specs/musicpack-v1.md`).
+HTTP API (`musicpack-server`). API versioning is **independent** of `.mpack`
+manifest versioning (`specs/musicpack-v1.md`).
 
-Status: **v1** (Phase 4). Read-only, collector-oriented, local/trusted-network.
+Status: **v1** (Phase 5). Read-only library API behind bearer-token
+authentication, with live scan/verify operations.
+
+## 0. Authentication
+
+All `/api/v1/*` endpoints require a bearer token **except** `GET
+/api/v1/health` (used for liveness probes).
+
+```http
+Authorization: Bearer mpk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+```
+
+- Tokens are opaque, 256-bit random secrets (`mpk_` + base64url), shown once
+  at creation. Only their SHA-256 is stored server-side; they are verified by
+  hash lookup with constant-time comparison.
+- Missing/malformed credentials → `401 unauthorized`.
+- A revoked or expired token → `401 unauthorized` (single privilege class;
+  `403` is reserved and used for disallowed CORS origins).
+- Tokens are managed with the CLI:
+  `musicpack-server token create --name "Web" | token list | token revoke <id>`.
+- The reference demo keeps the token in memory only (never localStorage) and
+  sends it as `Authorization: Bearer` on every request.
+
+## 0.1 CORS
+
+Restrictive by default. No `Access-Control-Allow-Origin: *`; when
+authentication is involved, CORS is granted only to origins explicitly listed
+with `--allow-origin URL` (repeatable).
+
+- A request with an `Origin` header not in the allow-list → `403
+  origin_forbidden`.
+- `OPTIONS` preflight for an allowed origin → `204` with
+  `Access-Control-Allow-Methods: GET, HEAD, POST, OPTIONS` and
+  `Access-Control-Allow-Headers: Authorization, Content-Type`.
+- Same-origin and no-Origin clients are unaffected.
+
+## 0.2 Live library maintenance
+
+```http
+POST /api/v1/library/scan        # rescan the library (one worker, idempotent)
+POST /api/v1/library/verify      # full sha256 integrity check (one worker)
+GET  /api/v1/library/status      # current/last scan + verify state
+```
+
+- A scan/verify runs on a single background worker over SQLite WAL; serving
+  and API reads continue, and new state is visible after each package's
+  commit. If a scan or verify is already running, a duplicate request returns
+  `409 scan_already_running`.
+- `GET /library/status` returns e.g.:
+
+```json
+{ "scan": { "running": false, "startedAt": "…", "finishedAt": "…",
+            "packagesScanned": 124, "added": 2, "updated": 1,
+            "removed": 0, "invalid": 0 },
+  "verify": { "running": false, "packagesVerified": 124, "passed": 120,
+              "warnings": 2, "failed": 2 } }
+```
+
+- Verification uses `.mpack` semantics (SHA-256 of every referenced object)
+  and updates each package's `status`/`verify_status`. Nothing is hashed at
+  startup.
 
 ## 1. Conventions
 
@@ -53,8 +113,11 @@ Every failure returns a consistent JSON envelope:
 | code                | HTTP  | meaning                                   |
 |---------------------|-------|-------------------------------------------|
 | `invalid_request`   | 400   | malformed id, pagination, or path         |
+| `unauthorized`      | 401   | missing, invalid, expired or revoked token |
+| `origin_forbidden`  | 403   | disallowed CORS origin                    |
 | `not_found`         | 404   | unknown resource or endpoint              |
-| `unsupported_method`| 405   | non-GET/HEAD                              |
+| `unsupported_method`| 405   | non-GET/HEAD/POST                         |
+| `scan_already_running` | 409 | a scan or verify is already running      |
 | `bad_range`         | 416   | unsatisfiable or malformed `Range`        |
 | `unavailable`       | 503   | package/file missing or invalid           |
 | `internal`          | 500   | server-side failure                       |
@@ -191,7 +254,7 @@ streamed from an fd; never loaded into RAM.
 - `416 Range Not Satisfiable` for unsatisfiable or malformed ranges, with
   `Content-Range: bytes */<size>`
 
-Single range syntax (RFC 7233), all supported:
+Single range syntax (RFC 9110 §14.2, "Range"), all supported:
 
 ```
 Range: bytes=0-1023      first 1024 bytes
@@ -223,6 +286,15 @@ Content-Type: audio/musepack
 
 **Integrity guarantee:** the bytes served for a track hash to the `sha256`
 recorded for that audio object in the `.mpack` manifest.
+
+### Validators and caching
+
+Audio/assets expose a **strong `ETag`** equal to the manifest `sha256`
+(e.g. `ETag: "842a…c6e8"`). `If-None-Match` with a matching validator returns
+`304 Not Modified` (taking precedence over `Range` per RFC 9110 §13.1.1).
+Responses carry `Cache-Control: private, max-age=0, must-revalidate` — package
+bytes can change on a rescan, so content is revalidated rather than marked
+immutable. API JSON responses use `Cache-Control: no-store`.
 
 ## 4. MIME / codec semantics
 
@@ -268,8 +340,16 @@ manifest (derived, not canonical).
 - Loopback binding by default; never auto-exposes remote access.
 - No arbitrary-path endpoints; serving only from DB ids + containment-checked
   package paths (realpath, no `..`, no symlink escape).
-- Strict numeric parsing for ids and ranges; bounded paths/pagination.
-- No shell execution in request handling.
-- `extras/` is indexed but not served.
-- Phase 4 is local/trusted-network development; authentication is deferred to
-  a later phase.
+- Strict numeric parsing for ids and ranges; bounded paths/pagination;
+  connection limits, per-IP limits and idle timeouts on the server.
+- Tokens: 256-bit CSPRNG secrets, only SHA-256 stored, constant-time
+  verification, revocable, never logged.
+- `extras/` is indexed but not served; the static demo directory
+  (`--static-dir`) serves only files under that directory and is never backed
+  by library packages.
+- The reference demo is served from the server's origin with
+  `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy:
+  require-corp` (cross-origin isolation for the SharedArrayBuffer reader).
+- Deployment: Phase 5 is local/trusted-network; for remote access put the
+  server behind a TLS-terminating reverse proxy or tunnel (the server stays
+  privately bound). No TLS is implemented by the server itself.
