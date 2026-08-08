@@ -18,10 +18,6 @@
 # if defined(__linux__)
 #  include <sys/random.h>
 # endif
-# if defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || \
-     defined(__NetBSD__) || defined(__DragonFly__)
-#  include <stdlib.h>
-# endif
 #endif
 
 int
@@ -35,7 +31,13 @@ mp_random_bytes(unsigned char *out, size_t n)
                                       BCRYPT_USE_SYSTEM_PREFERRED_RNG);
         return st == 0 ? 0 : -1;
     }
-#elif defined(__linux__)
+#elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || \
+      defined(__NetBSD__) || defined(__DragonFly__)
+    arc4random_buf(out, n);
+    return 0;
+#else
+    /* Linux and other POSIX systems. */
+# if defined(__linux__)
     {
         size_t done = 0;
         while (done < n) {
@@ -51,11 +53,7 @@ mp_random_bytes(unsigned char *out, size_t n)
             return 0;
         /* fall through to /dev/urandom */
     }
-#elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || \
-      defined(__NetBSD__) || defined(__DragonFly__)
-    arc4random_buf(out, n);
-    return 0;
-#endif
+# endif
     {
         int fd = open("/dev/urandom", O_RDONLY);
         size_t done = 0;
@@ -78,4 +76,5 @@ mp_random_bytes(unsigned char *out, size_t n)
         close(fd);
         return 0;
     }
+#endif
 }
