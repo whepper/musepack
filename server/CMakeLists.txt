@@ -22,6 +22,8 @@ set(MUSICPACK_SERVER_SOURCES
     src/range.c
     src/json.c
     src/config.c
+    src/random.c
+    src/tokens.c
     ${CMAKE_CURRENT_SOURCE_DIR}/vendor/sqlite/sqlite3.c)
 
 add_library(musicpack_server STATIC ${MUSICPACK_SERVER_SOURCES})
@@ -37,6 +39,7 @@ if(WIN32)
   target_include_directories(musicpack_server PRIVATE
       ${PROJECT_SOURCE_DIR}/win32)
   target_sources(musicpack_server PRIVATE ${PROJECT_SOURCE_DIR}/win32/dirent.c)
+  target_link_libraries(musicpack_server PRIVATE bcrypt)
 endif()
 
 target_compile_definitions(musicpack_server PRIVATE
@@ -63,7 +66,7 @@ endif()
 
 if(MPC_BUILD_SERVER)
   if(MICROHTTPD_FOUND)
-    add_executable(musicpack_server_cmd src/main.c src/http.c src/api.c)
+    add_executable(musicpack_server_cmd src/main.c src/http.c src/api.c src/jobs.c)
     target_link_libraries(musicpack_server_cmd PRIVATE
         musicpack_server PkgConfig::MICROHTTPD)
     set_target_properties(musicpack_server_cmd PROPERTIES

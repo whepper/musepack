@@ -89,22 +89,30 @@ stmt_prepare(mp_library *lib, const char *sql)
 
 /* ---- package rows ------------------------------------------------------ */
 
+/* Copies a possibly-NULL text column into a buffer (empty when NULL). */
+static void
+col_cpy(char *dst, size_t cap, sqlite3_stmt *st, int idx)
+{
+    const unsigned char *t;
+    if (cap == 0)
+        return;
+    dst[0] = '\0';
+    t = sqlite3_column_text(st, idx);
+    if (t != 0)
+        snprintf(dst, cap, "%s", (const char *) t);
+}
+
 static void
 fill_package_row(sqlite3_stmt *st, mp_package_row *row)
 {
     memset(row, 0, sizeof *row);
     row->id = sqlite3_column_int64(st, 0);
     row->release_id = sqlite3_column_int64(st, 1);
-    snprintf(row->path, sizeof row->path, "%s",
-             sqlite3_column_text(st, 2));
-    snprintf(row->fingerprint, sizeof row->fingerprint, "%s",
-             sqlite3_column_text(st, 3));
-    snprintf(row->manifest_sha256, sizeof row->manifest_sha256, "%s",
-             sqlite3_column_text(st, 4));
-    snprintf(row->status, sizeof row->status, "%s",
-             sqlite3_column_text(st, 5));
-    snprintf(row->verify_status, sizeof row->verify_status, "%s",
-             sqlite3_column_text(st, 6));
+    col_cpy(row->path, sizeof row->path, st, 2);
+    col_cpy(row->fingerprint, sizeof row->fingerprint, st, 3);
+    col_cpy(row->manifest_sha256, sizeof row->manifest_sha256, st, 4);
+    col_cpy(row->status, sizeof row->status, st, 5);
+    col_cpy(row->verify_status, sizeof row->verify_status, st, 6);
 }
 
 int
@@ -647,20 +655,16 @@ fill_object_ref(sqlite3_stmt *st, mp_object_ref *ref)
     memset(ref, 0, sizeof *ref);
     ref->id = sqlite3_column_int64(st, 0);
     ref->release_id = sqlite3_column_int64(st, 1);
-    snprintf(ref->package_path, sizeof ref->package_path, "%s",
-             sqlite3_column_text(st, 2));
-    snprintf(ref->relative_path, sizeof ref->relative_path, "%s",
-             sqlite3_column_text(st, 3));
-    snprintf(ref->mime, sizeof ref->mime, "%s",
-             sqlite3_column_text(st, 4));
-    snprintf(ref->codec, sizeof ref->codec, "%s",
-             sqlite3_column_text(st, 5));
+    col_cpy(ref->package_path, sizeof ref->package_path, st, 2);
+    col_cpy(ref->relative_path, sizeof ref->relative_path, st, 3);
+    col_cpy(ref->mime, sizeof ref->mime, st, 4);
+    col_cpy(ref->codec, sizeof ref->codec, st, 5);
     ref->file_size = sqlite3_column_int64(st, 6);
-    snprintf(ref->status, sizeof ref->status, "%s",
-             sqlite3_column_text(st, 7));
+    col_cpy(ref->status, sizeof ref->status, st, 7);
     ref->stream_version = sqlite3_column_int(st, 8);
     ref->sample_rate = sqlite3_column_int64(st, 9);
     ref->channels = sqlite3_column_int64(st, 10);
+    col_cpy(ref->sha256, sizeof ref->sha256, st, 11);
 }
 
 int
@@ -669,7 +673,7 @@ mp_library_track_audio(mp_library *lib, long long track_id, mp_object_ref *ref)
     sqlite3_stmt *st = stmt_prepare(lib,
         "SELECT a.id, r.id, p.path, a.relative_path, a.mime_type, a.codec,"
         "       a.file_size, p.status, a.stream_version, a.sample_rate,"
-        "       a.channels"
+        "       a.channels, a.sha256"
         "  FROM tracks t"
         "  JOIN media me ON me.id = t.media_id"
         "  JOIN releases r ON r.id = me.release_id"
@@ -695,7 +699,7 @@ mp_library_asset(mp_library *lib, long long asset_id, mp_object_ref *ref)
 {
     sqlite3_stmt *st = stmt_prepare(lib,
         "SELECT a.id, r.id, p.path, a.relative_path, a.mime_type, '',"
-        "       a.file_size, p.status, 0, 0, 0"
+        "       a.file_size, p.status, 0, 0, 0, a.sha256"
         "  FROM assets a"
         "  JOIN releases r ON r.id = a.release_id"
         "  JOIN packages p ON p.release_id = r.id"

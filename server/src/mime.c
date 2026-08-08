@@ -28,6 +28,8 @@ mp_mime_for_path(const char *path)
     if (strcmp(e, ".webp") == 0) return "image/webp";
     if (strcmp(e, ".bmp") == 0)  return "image/bmp";
     if (strcmp(e, ".pdf") == 0)  return "application/pdf";
+    if (strcmp(e, ".html") == 0 || strcmp(e, ".htm") == 0) return "text/html";
+    if (strcmp(e, ".js") == 0)   return "text/javascript";
     if (strcmp(e, ".lrc") == 0 || strcmp(e, ".txt") == 0 ||
         strcmp(e, ".md") == 0)   return "text/plain";
     return "application/octet-stream";

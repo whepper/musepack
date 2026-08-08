@@ -65,13 +65,39 @@ typedef struct mp_scan_result {
     int total;      ///< packages seen (valid + invalid)
 } mp_scan_result;
 
+/// Optional per-package progress callback (called with the accumulating
+/// result after each package and once more after the removal sweep).
+typedef void (*mp_scan_progress_fn)(void *ctx, const mp_scan_result *partial);
+
 /// Scans \p root into \p lib.
 ///
 /// \param verify 1 = run full integrity verification (sha256 of every
 ///        referenced object) and record statuses; 0 = manifest + object
 ///        existence only.
+/// \param progress optional progress callback (may be NULL)
+/// \param ctx      opaque context passed to \p progress
 musicpack_status mp_scan_library(mp_library *lib, const char *root,
-                                 int verify, mp_scan_result *res);
+                                 int verify, mp_scan_result *res,
+                                 mp_scan_progress_fn progress, void *ctx);
+
+/* ---- library-wide verification (Phase 5) ------------------------------ */
+
+typedef struct mp_verify_result {
+    int total;      ///< packages checked
+    int passed;     ///< sha256-clean, no warnings
+    int warnings;   ///< clean but with warnings (stray files, ...)
+    int failed;     ///< checksum failure or unopenable package
+} mp_verify_result;
+
+typedef void (*mp_verify_progress_fn)(void *ctx, const mp_verify_result *partial);
+
+/// Runs full `musicpack verify` semantics over every non-unavailable,
+/// non-invalid package and records `status`/`verify_status`. Designed to run
+/// on a worker thread against its own WAL connection while the server keeps
+/// serving.
+musicpack_status mp_verify_library(mp_library *lib, const char *root,
+                                   mp_verify_result *res,
+                                   mp_verify_progress_fn progress, void *ctx);
 
 #ifdef __cplusplus
 }

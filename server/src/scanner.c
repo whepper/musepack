@@ -14,6 +14,8 @@
 #include <string.h>
 #include <time.h>
 
+#include <sqlite3.h>
+
 #include <musicpack/checksum.h>
 
 #ifdef _WIN32
@@ -290,7 +292,8 @@ record_invalid(mp_library *lib, const char *dir, const char *manifest_sha,
 
 static void
 process_package(mp_library *lib, const char *dir, const char *last_scan,
-                int verify, mp_scan_result *res)
+                int verify, mp_scan_result *res, mp_scan_progress_fn progress,
+                void *ctx)
 {
     char mpath[MUSICPACK_PATH_MAX + 2];
     char *json;
@@ -306,6 +309,7 @@ process_package(mp_library *lib, const char *dir, const char *last_scan,
         record_invalid(lib, dir, "", last_scan, "manifest.json unreadable",
                        res);
         res->total++;
+        if (progress) progress(ctx, res);
         return;
     }
     mp_identity_manifest_hash(json, strlen(json), manifest_sha,
@@ -321,6 +325,7 @@ process_package(mp_library *lib, const char *dir, const char *last_scan,
                                   row.status, row.verify_status, last_scan, 0);
         mp_library_commit(lib);
         res->total++;
+        if (progress) progress(ctx, res);
         return;
     }
 
@@ -331,6 +336,7 @@ process_package(mp_library *lib, const char *dir, const char *last_scan,
                        "manifest parse/validation failed", res);
         free(json);
         res->total++;
+        if (progress) progress(ctx, res);
         return;
     }
     if (!mp_library_package_by_path(lib, dir, &row) &&
@@ -338,6 +344,7 @@ process_package(mp_library *lib, const char *dir, const char *last_scan,
         musicpack_package_close(pkg);
         free(json);
         res->total++;
+        if (progress) progress(ctx, res);
         return;
     }
     if (ingest_valid(lib, dir, pkg, manifest_sha, last_scan, verify, res) != 0)
@@ -345,11 +352,12 @@ process_package(mp_library *lib, const char *dir, const char *last_scan,
     musicpack_package_close(pkg);
     free(json);
     res->total++;
+    if (progress) progress(ctx, res);
 }
 
 static void
 walk(mp_library *lib, const char *abs, const char *last_scan, int verify,
-     mp_scan_result *res)
+     mp_scan_result *res, mp_scan_progress_fn progress, void *ctx)
 {
     DIR *d = opendir(abs);
     struct dirent *e;
@@ -387,16 +395,16 @@ walk(mp_library *lib, const char *abs, const char *last_scan, int verify,
         if (!is_dir)
             continue;
         if (ends_with(e->d_name, ".mpack"))
-            process_package(lib, next, last_scan, verify, res);
+            process_package(lib, next, last_scan, verify, res, progress, ctx);
         else
-            walk(lib, next, last_scan, verify, res);
+            walk(lib, next, last_scan, verify, res, progress, ctx);
     }
     closedir(d);
 }
 
 musicpack_status
 mp_scan_library(mp_library *lib, const char *root, int verify,
-                mp_scan_result *res)
+                mp_scan_result *res, mp_scan_progress_fn progress, void *ctx)
 {
     static unsigned counter;
     char last_scan[64];
@@ -406,14 +414,89 @@ mp_scan_library(mp_library *lib, const char *root, int verify,
     snprintf(last_scan, sizeof last_scan, "s%ld.%u", (long) time(0),
              counter++);
     MP_LOGI("scan start (root=%s, verify=%s)", root, verify ? "yes" : "no");
-    walk(lib, root, last_scan, verify, res);
+    walk(lib, root, last_scan, verify, res, progress, ctx);
     if (res != 0) {
         int removed = mp_library_package_sweep(lib, last_scan);
         res->removed += removed;
+        if (progress)
+            progress(ctx, res);
         MP_LOGI("scan done: %d seen, +%d added, %d updated, %d moved, "
                 "%d removed, %d invalid",
                 res->total, res->added, res->updated, res->moved,
                 res->removed, res->invalid);
     }
+    return MUSICPACK_OK;
+}
+
+/* ---- library-wide verification (Phase 5) ------------------------------- */
+
+static int
+pkg_set_verify(mp_library *lib, long long id, const char *status,
+               const char *vstat)
+{
+    sqlite3_stmt *st;
+    if (sqlite3_prepare_v2(mp_library_sqlite(lib),
+            "UPDATE packages SET status=?2, verify_status=?3,"
+            " updated_at=datetime('now') WHERE id=?1", -1, &st, 0)
+        != SQLITE_OK)
+        return -1;
+    sqlite3_bind_int64(st, 1, id);
+    sqlite3_bind_text(st, 2, status, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st, 3, vstat, -1, SQLITE_TRANSIENT);
+    sqlite3_step(st);
+    sqlite3_finalize(st);
+    return 0;
+}
+
+musicpack_status
+mp_verify_library(mp_library *lib, const char *root, mp_verify_result *res,
+                  mp_verify_progress_fn progress, void *ctx)
+{
+    sqlite3_stmt *st;
+    sqlite3 *db;
+
+    (void) root;
+    if (res != 0)
+        memset(res, 0, sizeof *res);
+    db = mp_library_sqlite(lib);
+    if (sqlite3_prepare_v2(db,
+            "SELECT id, path FROM packages"
+            " WHERE status NOT IN ('unavailable','invalid') ORDER BY id",
+            -1, &st, 0) != SQLITE_OK)
+        return MUSICPACK_ERR_IO;
+    while (sqlite3_step(st) == SQLITE_ROW) {
+        long long id = sqlite3_column_int64(st, 0);
+        const char *path = (const char *) sqlite3_column_text(st, 1);
+        musicpack_package *pkg = musicpack_package_open_dir(path, 0);
+        const char *status = "valid", *vstat = "valid";
+
+        res->total++;
+        if (pkg == 0) {
+            status = "warning";
+            vstat = "unverified";
+            pkg_set_verify(lib, id, status, vstat);
+            res->failed++;
+        } else {
+            musicpack_report rep = { 0, 0 };
+            if (musicpack_package_verify(pkg, &rep, 0, 0) != MUSICPACK_OK) {
+                status = "checksum-failed";
+                vstat = "checksum-failed";
+                res->failed++;
+            } else if (rep.warnings > 0) {
+                status = "warning";
+                vstat = "warning";
+                res->warnings++;
+            } else {
+                res->passed++;
+            }
+            pkg_set_verify(lib, id, status, vstat);
+            musicpack_package_close(pkg);
+        }
+        if (progress)
+            progress(ctx, res);
+    }
+    sqlite3_finalize(st);
+    MP_LOGI("verify done: %d checked, %d passed, %d warnings, %d failed",
+            res->total, res->passed, res->warnings, res->failed);
     return MUSICPACK_OK;
 }

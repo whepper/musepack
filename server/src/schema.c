@@ -141,7 +141,19 @@ static const char *const mp_migrations[] = {
 "  created_at TEXT NOT NULL DEFAULT (datetime('now')),"
 "  updated_at TEXT NOT NULL DEFAULT (datetime('now')));"
 "CREATE INDEX packages_fingerprint_idx ON packages(fingerprint);"
-"CREATE INDEX packages_release_idx ON packages(release_id);"
+"CREATE INDEX packages_release_idx ON packages(release_id);",
+
+/* 1 -> 2: API tokens (Phase 5). Only the SHA-256 of the secret is stored;
+   the raw token is shown once at creation. A token is valid unless
+   revoked_at is set or (when set) expires_at is in the past. */
+"CREATE TABLE tokens ("
+"  id INTEGER PRIMARY KEY,"
+"  name TEXT NOT NULL,"
+"  token_hash TEXT NOT NULL UNIQUE,"
+"  created_at TEXT NOT NULL DEFAULT (datetime('now')),"
+"  last_used_at TEXT,"
+"  expires_at TEXT,"
+"  revoked_at TEXT);"
 };
 
 const char *const *

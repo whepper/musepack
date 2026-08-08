@@ -147,6 +147,7 @@ typedef struct mp_object_ref {
     char relative_path[MUSICPACK_PATH_MAX + 2]; ///< manifest-relative
     char mime[48];
     char codec[24];
+    char sha256[MUSICPACK_SHA256_HEX_SIZE]; ///< manifest sha256 (strong ETag)
     long long file_size;
     char status[32];       ///< package status: valid/warning/.../unavailable
     int stream_version;

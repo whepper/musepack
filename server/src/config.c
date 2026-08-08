@@ -21,6 +21,7 @@ mp_config_defaults(mp_config *c)
     c->port = 8080;
     c->verify_on_scan = 0;
     c->no_scan = 0;
+    c->allow_origin_count = 0;
 }
 
 void
@@ -45,4 +46,31 @@ mp_config_set_str(char *dst, size_t cap, const char *value)
     if (dst == 0 || cap == 0 || value == 0)
         return;
     snprintf(dst, cap, "%s", value);
+}
+
+int
+mp_config_add_origin(mp_config *c, const char *origin)
+{
+    if (c == 0 || origin == 0 || *origin == '\0')
+        return -1;
+    if (c->allow_origin_count >= MP_ALLOW_ORIGIN_MAX)
+        return -1;
+    mp_config_set_str(c->allow_origin[c->allow_origin_count],
+                      sizeof c->allow_origin[0], origin);
+    c->allow_origin_count++;
+    return 0;
+}
+
+int
+mp_config_origin_allowed(const mp_config *c, const char *origin)
+{
+    int i;
+    if (c == 0 || origin == 0)
+        return 0;
+    if (c->allow_origin_count == 0)
+        return 0;
+    for (i = 0; i < c->allow_origin_count; i++)
+        if (strcmp(c->allow_origin[i], origin) == 0)
+            return 1;
+    return 0;
 }

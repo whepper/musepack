@@ -32,13 +32,17 @@
   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 /// \file api.h
-/// HTTP API v1 request dispatch.
+/// HTTP API v1 request dispatch + authentication.
 ///
 /// Builds a fully-formed libmicrohttpd response (JSON or streaming fd) for a
-/// request. The HTTP loop queues and destroys it.
+/// request. The HTTP loop queues and destroys it. Authentication (Bearer
+/// tokens, CORS) is centralized here so later session/user models plug in
+/// without touching the routes.
 #ifndef MPSERVER_API_H_
 #define MPSERVER_API_H_
 
+#include "config.h"
+#include "jobs.h"
 #include "library.h"
 
 #ifdef __cplusplus
@@ -48,9 +52,15 @@ extern "C" {
 struct MHD_Connection;
 struct MHD_Response;
 
+typedef struct mp_server_ctx {
+    mp_library *lib;
+    const mp_config *cfg;
+    mp_job_state *jobs;
+} mp_server_ctx;
+
 /// Handles one request. Returns an MHD response (caller queues + destroys)
 /// or NULL on internal failure. \p status_out receives the HTTP status code.
-struct MHD_Response *mp_api_handle(mp_library *lib,
+struct MHD_Response *mp_api_handle(mp_server_ctx *srv,
                                    struct MHD_Connection *c,
                                    const char *method, const char *url,
                                    unsigned int *status_out);

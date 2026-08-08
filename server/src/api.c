@@ -8,11 +8,14 @@
 #include "log.h"
 #include "mime.h"
 #include "range.h"
+#include "scanner.h"
+#include "tokens.h"
 
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 #include <sys/stat.h>
 #include <sqlite3.h>
@@ -192,6 +195,21 @@ serveable(const mp_object_ref *ref)
            strcmp(ref->status, "invalid") != 0;
 }
 
+/* Strong ETag from the manifest sha256 + revalidation cache policy. The
+   object URL is stable across rescans but the bytes can change, so content
+   is revalidated rather than treated as immutable. */
+static void
+add_validators(struct MHD_Response *resp, const mp_object_ref *ref)
+{
+    if (ref->sha256[0] != '\0') {
+        char etag[MUSICPACK_SHA256_HEX_SIZE + 3];
+        snprintf(etag, sizeof etag, "\"%s\"", ref->sha256);
+        MHD_add_response_header(resp, "ETag", etag);
+    }
+    MHD_add_response_header(resp, "Cache-Control",
+                            "private, max-age=0, must-revalidate");
+}
+
 static struct MHD_Response *
 serve_object(mp_library *lib, const mp_object_ref *ref,
              struct MHD_Connection *c, unsigned int *status_out)
@@ -200,6 +218,7 @@ serve_object(mp_library *lib, const mp_object_ref *ref,
     int fd;
     struct stat st;
     const char *range;
+    const char *inm;
     mp_range r;
     struct MHD_Response *resp;
 
@@ -231,6 +250,23 @@ serve_object(mp_library *lib, const mp_object_ref *ref,
         return error_response(500, "internal", "invalid source file size");
     }
 
+    /* If-None-Match takes precedence over Range (RFC 9110 §13.1.1). */
+    inm = MHD_lookup_connection_value(c, MHD_HEADER_KIND, "If-None-Match");
+    if (ref->sha256[0] != '\0' && inm != 0) {
+        char etag[MUSICPACK_SHA256_HEX_SIZE + 3];
+        snprintf(etag, sizeof etag, "\"%s\"", ref->sha256);
+        if (strcmp(inm, etag) == 0) {
+            close(fd);
+            resp = MHD_create_response_from_buffer(0, 0,
+                                                   MHD_RESPMEM_PERSISTENT);
+            MHD_add_response_header(resp, "ETag", etag);
+            MHD_add_response_header(resp, "Cache-Control",
+                                    "private, max-age=0, must-revalidate");
+            *status_out = 304;
+            return resp;
+        }
+    }
+
     range = MHD_lookup_connection_value(c, MHD_HEADER_KIND, "Range");
     if (range == 0) {
         resp = MHD_create_response_from_fd64((uint64_t) st.st_size, fd);
@@ -241,6 +277,7 @@ serve_object(mp_library *lib, const mp_object_ref *ref,
         }
         MHD_add_response_header(resp, "Content-Type", ref->mime);
         MHD_add_response_header(resp, "Accept-Ranges", "bytes");
+        add_validators(resp, ref);
         *status_out = 200;
         return resp;
     }
@@ -260,6 +297,7 @@ serve_object(mp_library *lib, const mp_object_ref *ref,
         MHD_add_response_header(resp, "Content-Type", ref->mime);
         MHD_add_response_header(resp, "Accept-Ranges", "bytes");
         MHD_add_response_header(resp, "Content-Range", cr);
+        add_validators(resp, ref);
         *status_out = 206;
         return resp;
     }
@@ -813,21 +851,99 @@ handle_stream(mp_library *lib, struct MHD_Connection *c, long long id,
     return serve_object(lib, &ref, c, st);
 }
 
+/* ---------- library jobs (scan / verify / status) ----------------------- */
+
+static mp_json *
+jobs_json(mp_server_ctx *srv)
+{
+    mp_job_state *j = srv->jobs;
+    mp_json *o = mp_json_obj();
+    mp_json *scan = mp_json_obj();
+    mp_json *verify = mp_json_obj();
+    int scan_running = j->running && j->kind == MP_JOB_SCAN;
+    int verify_running = j->running && j->kind == MP_JOB_VERIFY;
+
+    mp_json_int(scan, "running", scan_running);
+    mp_json_str(scan, "startedAt", j->started_at);
+    mp_json_str(scan, "finishedAt", j->finished_at);
+    mp_json_int(scan, "packagesScanned", j->packages_scanned);
+    mp_json_int(scan, "added", j->added);
+    mp_json_int(scan, "updated", j->updated);
+    mp_json_int(scan, "removed", j->removed);
+    mp_json_int(scan, "invalid", j->invalid);
+
+    mp_json_int(verify, "running", verify_running);
+    mp_json_str(verify, "startedAt", j->started_at);
+    mp_json_str(verify, "finishedAt", j->finished_at);
+    mp_json_int(verify, "packagesVerified", j->verified_total);
+    mp_json_int(verify, "passed", j->verified_passed);
+    mp_json_int(verify, "warnings", j->verified_warnings);
+    mp_json_int(verify, "failed", j->verified_failed);
+
+    mp_json_add(o, "scan", scan);
+    mp_json_add(o, "verify", verify);
+    return o;
+}
+
+static struct MHD_Response *
+library_status_response(mp_server_ctx *srv, unsigned int status)
+{
+    char *s = mp_json_render(jobs_json(srv));
+    struct MHD_Response *r = json_response(s, status);
+    free(s);
+    return r;
+}
+
+static struct MHD_Response *
+handle_library_scan(mp_server_ctx *srv, unsigned int *st)
+{
+    if (mp_jobs_start(srv->jobs, srv->cfg, MP_JOB_SCAN) != 0) {
+        *st = 409;
+        return error_response(409, "scan_already_running",
+                              "a scan or verify is already running");
+    }
+    *st = 202;
+    return library_status_response(srv, 202);
+}
+
+static struct MHD_Response *
+handle_library_verify(mp_server_ctx *srv, unsigned int *st)
+{
+    if (mp_jobs_start(srv->jobs, srv->cfg, MP_JOB_VERIFY) != 0) {
+        *st = 409;
+        return error_response(409, "scan_already_running",
+                              "a scan or verify is already running");
+    }
+    *st = 202;
+    return library_status_response(srv, 202);
+}
+
+static struct MHD_Response *
+handle_library_status(mp_server_ctx *srv, unsigned int *st)
+{
+    *st = 200;
+    return library_status_response(srv, 200);
+}
+
 /* ---------- dispatch ----------------------------------------------------- */
 
-struct MHD_Response *
-mp_api_handle(mp_library *lib, struct MHD_Connection *c, const char *method,
-              const char *url, unsigned int *status_out)
+/* Routes the authenticated request. Authentication and CORS live in
+   mp_api_handle so route handlers stay auth-agnostic. */
+static struct MHD_Response *
+dispatch(mp_server_ctx *srv, struct MHD_Connection *c, const char *method,
+         const char *url, unsigned int *status_out)
 {
+    mp_library *lib = srv->lib;
     char path[2048];
     char *q;
     long long id;
 
     *status_out = 200;
-    if (strcmp(method, "GET") != 0 && strcmp(method, "HEAD") != 0) {
+    if (strcmp(method, "GET") != 0 && strcmp(method, "HEAD") != 0 &&
+        strcmp(method, "POST") != 0) {
         *status_out = 405;
         return error_response(405, "unsupported_method",
-                              "only GET and HEAD are supported");
+                              "only GET, HEAD and POST are supported");
     }
     if (url == 0 || strlen(url) >= sizeof path) {
         *status_out = 400;
@@ -840,6 +956,43 @@ mp_api_handle(mp_library *lib, struct MHD_Connection *c, const char *method,
 
     if (strcmp(path, "/api/v1/health") == 0)
         return handle_health(lib);
+
+    /* ---- everything under /api/v1 except health requires a token ---- */
+    {
+        const char *auth = MHD_lookup_connection_value(c, MHD_HEADER_KIND,
+                                                       "Authorization");
+        mp_token_row row;
+        if (auth == 0 || strncasecmp(auth, "Bearer ", 7) != 0) {
+            *status_out = 401;
+            return error_response(401, "unauthorized",
+                                  "missing bearer token");
+        }
+        if (!mp_token_authorize(lib, auth + 7, &row)) {
+            *status_out = 401;
+            return error_response(401, "unauthorized",
+                                  "invalid, expired or revoked token");
+        }
+    }
+
+    if (strcmp(path, "/api/v1/library/scan") == 0) {
+        if (strcmp(method, "POST") != 0) {
+            *status_out = 405;
+            return error_response(405, "unsupported_method",
+                                  "use POST for library scan");
+        }
+        return handle_library_scan(srv, status_out);
+    }
+    if (strcmp(path, "/api/v1/library/verify") == 0) {
+        if (strcmp(method, "POST") != 0) {
+            *status_out = 405;
+            return error_response(405, "unsupported_method",
+                                  "use POST for library verify");
+        }
+        return handle_library_verify(srv, status_out);
+    }
+    if (strcmp(path, "/api/v1/library/status") == 0)
+        return handle_library_status(srv, status_out);
+
     if (strcmp(path, "/api/v1/artists") == 0)
         return handle_artists(lib, c, status_out);
     if (strncmp(path, "/api/v1/artists/", 16) == 0) {
@@ -904,4 +1057,53 @@ mp_api_handle(mp_library *lib, struct MHD_Connection *c, const char *method,
 
     *status_out = 404;
     return error_response(404, "not_found", "Unknown endpoint");
+}
+
+/* Public entry: CORS gate, then dispatch. Authentication for the API routes
+   happens inside dispatch (health is public). */
+struct MHD_Response *
+mp_api_handle(mp_server_ctx *srv, struct MHD_Connection *c, const char *method,
+              const char *url, unsigned int *status_out)
+{
+    const char *origin = MHD_lookup_connection_value(c, MHD_HEADER_KIND,
+                                                     "Origin");
+    int cors_ok = 0;
+    struct MHD_Response *resp;
+
+    *status_out = 200;
+    if (origin != 0) {
+        if (mp_config_origin_allowed(srv->cfg, origin)) {
+            cors_ok = 1;
+        } else {
+            *status_out = 403;
+            return error_response(403, "origin_forbidden",
+                                  "origin not allowed");
+        }
+    }
+    if (strcmp(method, "OPTIONS") == 0) {
+        if (!cors_ok) {
+            *status_out = 403;
+            return error_response(403, "origin_forbidden",
+                                  "preflight origin not allowed");
+        }
+        resp = MHD_create_response_from_buffer(0, 0, MHD_RESPMEM_PERSISTENT);
+        MHD_add_response_header(resp, MHD_HTTP_HEADER_ACCESS_CONTROL_ALLOW_ORIGIN,
+                                origin);
+        MHD_add_response_header(resp, "Access-Control-Allow-Methods",
+                                "GET, HEAD, POST, OPTIONS");
+        MHD_add_response_header(resp, "Access-Control-Allow-Headers",
+                                "Authorization, Content-Type");
+        MHD_add_response_header(resp, "Access-Control-Max-Age", "600");
+        MHD_add_response_header(resp, "Vary", "Origin");
+        *status_out = 204;
+        return resp;
+    }
+    resp = dispatch(srv, c, method, url, status_out);
+    if (resp != 0 && cors_ok) {
+        MHD_add_response_header(resp,
+                                MHD_HTTP_HEADER_ACCESS_CONTROL_ALLOW_ORIGIN,
+                                origin);
+        MHD_add_response_header(resp, "Vary", "Origin");
+    }
+    return resp;
 }

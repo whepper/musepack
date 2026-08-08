@@ -44,6 +44,7 @@
 #include <stddef.h>
 
 #include "config.h"
+#include "jobs.h"
 #include "library.h"
 
 #ifdef __cplusplus
@@ -54,9 +55,10 @@ extern "C" {
 ///
 /// \param lib  opened library (read/write)
 /// \param cfg  resolved configuration
+/// \param jobs job state (scan/verify workers)
 /// \param err  optional error buffer
 /// \return 0 on clean shutdown, -1 on failure
-int mp_http_serve(mp_library *lib, const mp_config *cfg,
+int mp_http_serve(mp_library *lib, const mp_config *cfg, mp_job_state *jobs,
                   char *err, size_t errcap);
 
 #ifdef __cplusplus

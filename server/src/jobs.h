@@ -31,54 +31,52 @@
   (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
-/// \file config.h
-/// Server configuration (Phase 4: minimal, explicit).
+/// \file jobs.h
+/// Single scan/verify worker (Phase 5 live library maintenance).
 ///
-/// Precedence: command line > environment > defaults. Defaults are safe:
-/// loopback-only binding, no remote access implied.
-#ifndef MPSERVER_CONFIG_H_
-#define MPSERVER_CONFIG_H_
+/// Exactly one background job runs at a time (scan or verify), on its own
+/// SQLite WAL connection, so the HTTP serving thread never blocks on
+/// filesystem work and readers keep seeing the last committed state. The
+/// MHD thread only ever takes a mutex-protected snapshot for /library/status.
+#ifndef MPSERVER_JOBS_H_
+#define MPSERVER_JOBS_H_
 
-#include <stddef.h>
+#include "config.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct mp_config {
-    char library[4096];
-    char database[4096];
-    char listen[128];
-    int port;
-    int verify_on_scan;   ///< scan/verify: full integrity verification
-    int no_scan;          ///< serve: skip the startup scan
-    char static_dir[4096];    ///< serve demo/static files ("" = disabled)
-    char allow_origin[8][512]; ///< explicit CORS whitelist
-    int allow_origin_count;
-} mp_config;
+enum {
+    MP_JOB_NONE = 0,
+    MP_JOB_SCAN = 1,
+    MP_JOB_VERIFY = 2,
+};
 
-/// Maximum number of explicitly allowed origins.
-#define MP_ALLOW_ORIGIN_MAX 8
+typedef struct mp_job_state {
+    int running;             ///< a job is currently running
+    int kind;                ///< MP_JOB_SCAN / MP_JOB_VERIFY while running
+    int last_kind;           ///< kind of the most recent completed job
+    char started_at[32];
+    char finished_at[32];
+    /* scan counters */
+    int packages_scanned;
+    int added, updated, removed, invalid;
+    /* verify counters */
+    int verified_total, verified_passed, verified_warnings, verified_failed;
+} mp_job_state;
 
-/// Fills \p c with defaults (library=./library, database=./library.db,
-/// listen=127.0.0.1, port=8080).
-void mp_config_defaults(mp_config *c);
+/// Initializes the job state.
+void mp_jobs_init(mp_job_state *st);
 
-/// Overrides any default with MUSICPACK_LIBRARY / MUSICPACK_DATABASE /
-/// MUSICPACK_LISTEN / MUSICPACK_PORT when set.
-void mp_config_apply_env(mp_config *c);
+/// Starts a scan or verify job on a background thread. Returns 0 on success,
+/// -1 if another job is already running (HTTP 409).
+int mp_jobs_start(mp_job_state *st, const mp_config *cfg, int kind);
 
-/// Adds an origin to the CORS whitelist (returns 0 on success).
-int mp_config_add_origin(mp_config *c, const char *origin);
-
-/// Returns 1 when \p origin is explicitly allowed (or when no whitelist is
-/// configured, in which case CORS headers are simply never emitted).
-int mp_config_origin_allowed(const mp_config *c, const char *origin);
-
-/// Copies a value into a config string field (truncated to the buffer).
-void mp_config_set_str(char *dst, size_t cap, const char *value);
+/// Waits for a running job to finish (blocks). Used at shutdown.
+void mp_jobs_wait(mp_job_state *st);
 
 #ifdef __cplusplus
 }
 #endif
-#endif /* MPSERVER_CONFIG_H_ */
+#endif /* MPSERVER_JOBS_H_ */
