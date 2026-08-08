@@ -30,6 +30,8 @@ mp_mime_for_path(const char *path)
     if (strcmp(e, ".pdf") == 0)  return "application/pdf";
     if (strcmp(e, ".html") == 0 || strcmp(e, ".htm") == 0) return "text/html";
     if (strcmp(e, ".js") == 0 || strcmp(e, ".mjs") == 0) return "text/javascript";
+    /* Vite emits the AudioWorklet entry under its source extension (.ts). */
+    if (strcmp(e, ".ts") == 0) return "text/javascript";
     if (strcmp(e, ".css") == 0)  return "text/css";
     if (strcmp(e, ".json") == 0) return "application/json";
     if (strcmp(e, ".svg") == 0)  return "image/svg+xml";
