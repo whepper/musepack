@@ -14,6 +14,7 @@
 #else
 # include <errno.h>
 # include <fcntl.h>
+# include <stdlib.h> /* arc4random_buf on macOS/BSD */
 # include <unistd.h>
 # if defined(__linux__)
 #  include <sys/random.h>
