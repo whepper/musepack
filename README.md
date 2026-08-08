@@ -1,85 +1,76 @@
-# Musepack (MPC)
+# MusicPack
 
-Musepack is an open-source, high-quality lossy audio codec. This repository
-contains the decoder (`libmpcdec`), the encoder core (`libmpcenc`,
-`libmpcpsy`), a small WAV I/O helper (`libwavformat`), and a set of command
-line tools.
+MusicPack is an open, self-hosted music ecosystem built around a simple idea:
+**an album should be a first-class digital object — not merely a folder full
+of loosely related files.**
 
-Stream formats **SV7** and **SV8** are supported by the decoder. The encoder
-produces SV8.
+A specific CD, vinyl pressing, remaster or digital edition is more than a set
+of tracks: it is a particular release with its own identity, artwork,
+mastering, catalogue information and provenance. MusicPack keeps that identity
+inside the album object itself, so a digital collection can feel like a
+**digital record shelf** — intentional, curated, and collectible again. Two
+editions of the same album are meaningful rather than redundant, because the
+library understands why they are different.
 
-## Building
+The project deliberately gives **Musepack** a starring role. Musepack is a
+mature, open and exceptionally efficient lossy codec — still one of the best
+ever designed for transparent music playback — and it is the audio foundation
+everything here is built on:
 
-CMake 3.16+ is required. All tools build out of the box:
-
-```sh
-cmake -S . -B build
-cmake --build build -j
+```text
+Musepack  = the codec      (.mpc / SV7 / SV8)
+MusicPack = the ecosystem  (.mpack packages, server, web client, tools)
 ```
 
-Useful options:
+The guiding rule of this repository:
 
-| Option               | Default             | Description                                  |
-|----------------------|---------------------|----------------------------------------------|
-| `MPC_BUILD_SHARED`   | `ON` (non-Windows)  | Build `libmusepack` as a shared library      |
-| `MPC_BUILD_TESTS`    | `OFF`               | Register the regression suites (ctest)       |
-| `MPC_BUILD_MPCGAIN`  | `ON`                | Build `mpcgain` (needs libreplaygain)        |
-| `MPC_BUILD_MPCCHAP`  | `ON`                | Build `mpcchap` (needs libcuefile)           |
-| `MPC_BUILD_SERVER`   | `ON`                | Build `musicpack-server` (needs libmicrohttpd)|
+> **Modernize the ecosystem aggressively; change the codec conservatively.**
 
-`mpcgain` and `mpcchap` are skipped automatically if their optional
-dependencies (`libreplaygain`, `libcuefile`) are not found.
-`musicpack-server` is skipped when `libmicrohttpd` is unavailable (Windows is
-not supported for the server executable; the server core still builds there).
+## What this repository is
 
-Install (headers, libraries, pkg-config files, and tools):
+- **The Musepack codec (foundation)** — the decoder (`libmpcdec`), the encoder
+  core (`libmpcenc`, `libmpcpsy`), a WAV helper (`libwavformat`), and the CLI
+  codec tools. The decoder supports SV7/SV8; the encoder produces SV8.
+- **The `.mpack` album model** — `libmusicpack` owns the package format: a
+  release-group → release/edition → media → track hierarchy, assets, SHA-256
+  integrity and BS.1770-5 loudness; the `musicpack` CLI authors, imports and
+  verifies packages.
+- **The server** — `musicpack-server` indexes an `.mpack` collection into a
+  SQLite collector library and serves it over a read-only HTTP API v1 with
+  **direct streaming** (the original audio bytes, never transcoded).
+- **The web client** — `web/` is the first-party "digital record shelf": browse
+  your collection by album and edition, then play it with Musepack
+  demand-driven WASM decoding, BS.1770 album normalization, gapless album
+  playback and Media Session integration.
+- **WASM + demo** — the decoder builds to WebAssembly (Emscripten); `demo/` is
+  a low-level playback proof-of-concept kept as a development/test artifact.
 
-```sh
-cmake --install build
-```
+---
 
-Installed consumers can use the packaged CMake targets:
+## The web client — a digital record shelf
 
-```cmake
-find_package(Musepack CONFIG REQUIRED)
-target_link_libraries(app PRIVATE Musepack::Decoder)
-```
+`web/` (Phase 6) is the first genuinely usable MusicPack client. It is
+deliberately a *digital record shelf*, not a streaming catalogue:
 
-## libmusepack decoder API
+- sign in once with a server token (exchanged for an **HttpOnly session
+  cookie**; the token is never stored in the browser)
+- an artwork-first **album shelf** with infinite scrolling, search and
+  "recently added"
+- an **album page** that shows which exact release/edition you are looking at
+  (edition chips, disc-grouped track lists, an expandable release-information
+  panel with identity, provenance, codec and BS.1770 details)
+- **playback** through one controller over two backends: the Musepack
+  demand-driven engine (SharedArrayBuffer reader → decoder workers → an
+  AudioWorklet ring) for `.mpc`, and the browser's native media stack for
+  FLAC and other supported codecs
+- BS.1770 album/track normalization (default −16 LUFS, true-peak capped),
+  **gapless album transitions**, a queue, Media Session, and a responsive
+  mobile/desktop UI
 
-`libmusepack` is the stable decoder-facing library (SV7/SV8). It exposes an
-opaque, single-threaded session API over a pluggable reader abstraction
-(files, memory buffers, or custom callbacks):
-
-```c
-#include <musepack/musepack.h>
-
-mpc_reader reader;
-mpc_reader_init_stdio(&reader, "song.mpc");
-musepack_decoder *d = musepack_decoder_open(&reader, 0);
-float pcm[MUSEPACK_FRAME_MAX * 2];
-uint64_t n;
-while (musepack_decoder_read(d, pcm, MUSEPACK_FRAME_MAX, &n) == MUSEPACK_OK) {
-    /* play n sample-frames of interleaved float PCM */
-}
-musepack_decoder_close(d);
-mpc_reader_exit_stdio(&reader);
-```
-
-See `docs/api.md` for the full API, ownership rules, error codes, and the
-reader design. The decoder also builds to WebAssembly (Emscripten) and powers two browser
-front-ends:
-
-- **The MusicPack web client** (`web/`, Phase 6) — the first-party "digital
-  record shelf": an authenticated album/edition browser with Musepack
-  demand-driven playback, BS.1770 album normalization, gapless transitions,
-  Media Session, and a responsive record-collection UI. `web/README.md`
-  documents the stack decision and the `npm run dev`/`npm run build` workflow.
-- The low-level WASM demo (`demo/`, Phase 5) — a development/test artifact
-  kept for the demand-reader plumbing.
-
-- WASM: `emcmake cmake -S . -B build-wasm && cmake --build build-wasm`
-- Web client: `web/README.md` (build, serve, run the Vitest/Playwright suites)
+The client is a static Svelte 5 + Vite + TypeScript build served by
+`musicpack-server --static-dir web/app/dist`. See `web/README.md` for the
+stack decision, the `npm run dev` / `npm run build` workflow, and the
+Vitest/Playwright suites.
 
 ## libmusicpack — the `.mpack` package model
 
@@ -154,16 +145,18 @@ musicpack-server token create --name "Web" | token list | token revoke <id>
 - **Authentication** — `/api/v1/*` is protected by opaque bearer tokens
   (256-bit secrets; only their SHA-256 is stored), except `GET
   /api/v1/health`. Tokens are created/listed/revoked via the CLI. CORS is
-  deny-by-default (`--allow-origin URL`, repeatable).
+  deny-by-default (`--allow-origin URL`, repeatable). The first-party web
+  client exchanges a token once for an **HttpOnly session cookie**
+  (`POST /api/v1/session`).
 - **Live maintenance** — `POST /api/v1/library/scan` and `POST
   /api/v1/library/verify` run on single background workers (SQLite WAL), so
   playback and API reads continue and new state appears after each commit;
   `GET /api/v1/library/status` reports current/last scan + verify state.
 - **HTTP API v1** — `GET /api/v1/health|albums|albums/{id}|releases/{id}|
-  tracks/{id}|tracks/{id}/audio|artists|artists/{id}|assets/{id}`, with
-  pagination, strict numeric ids, a JSON error envelope, and deterministic
-  ordering. Editions are never collapsed: an album lists its distinct
-  releases.
+  tracks/{id}|tracks/{id}/audio|artists|artists/{id}|assets/{id}|session`,
+  with pagination, strict numeric ids, a JSON error envelope, and
+  deterministic ordering. Editions are never collapsed: an album lists its
+  distinct releases.
 - **Direct streaming** — audio/assets are served as the **original stored
   bytes** (no decode/remux/rewrite) with full RFC 9110 single-range support
   (`206`/`416`, `Content-Range`, `Accept-Ranges`, `HEAD`), streamed from a
@@ -180,8 +173,87 @@ musicpack-server token create --name "Web" | token list | token revoke <id>
   seeking never fetches the whole file.
 
 Defaults are safe: loopback binding, no remote access implied. The API spec
-is `specs/musicpack-api-v1.md`. The web client is documented in
-`web/README.md`; the low-level WASM demo in `demo/README.md`.
+is `specs/musicpack-api-v1.md`.
+
+---
+
+## The Musepack codec (foundation)
+
+Musepack is the audio foundation: a mature, open lossy codec whose SV7/SV8
+streams the rest of the ecosystem plays and produces. The codec parts are
+preserved and modernized conservatively — they are stable, well-tested, and
+guarded by byte-identity regression tests.
+
+### Building
+
+CMake 3.16+ is required. Everything builds out of the box:
+
+```sh
+cmake -S . -B build
+cmake --build build -j
+```
+
+Useful options:
+
+| Option               | Default             | Description                                  |
+|----------------------|---------------------|----------------------------------------------|
+| `MPC_BUILD_SHARED`   | `ON` (non-Windows)  | Build `libmusepack` as a shared library      |
+| `MPC_BUILD_TESTS`    | `OFF`               | Register the regression suites (ctest)       |
+| `MPC_BUILD_MPCGAIN`  | `ON`                | Build `mpcgain` (needs libreplaygain)        |
+| `MPC_BUILD_MPCCHAP`  | `ON`                | Build `mpcchap` (needs libcuefile)           |
+| `MPC_BUILD_SERVER`   | `ON`                | Build `musicpack-server` (needs libmicrohttpd)|
+
+`mpcgain` and `mpcchap` are skipped automatically if their optional
+dependencies (`libreplaygain`, `libcuefile`) are not found.
+`musicpack-server` is skipped when `libmicrohttpd` is unavailable (Windows is
+not supported for the server executable; the server core still builds there).
+
+Install (headers, libraries, pkg-config files, and tools):
+
+```sh
+cmake --install build
+```
+
+Installed consumers can use the packaged CMake targets:
+
+```cmake
+find_package(Musepack CONFIG REQUIRED)   # the codec library
+target_link_libraries(app PRIVATE Musepack::Decoder)
+```
+
+### libmusepack decoder API
+
+`libmusepack` is the stable decoder-facing library (SV7/SV8). It exposes an
+opaque, single-threaded session API over a pluggable reader abstraction
+(files, memory buffers, or custom callbacks):
+
+```c
+#include <musepack/musepack.h>
+
+mpc_reader reader;
+mpc_reader_init_stdio(&reader, "song.mpc");
+musepack_decoder *d = musepack_decoder_open(&reader, 0);
+float pcm[MUSEPACK_FRAME_MAX * 2];
+uint64_t n;
+while (musepack_decoder_read(d, pcm, MUSEPACK_FRAME_MAX, &n) == MUSEPACK_OK) {
+    /* play n sample-frames of interleaved float PCM */
+}
+musepack_decoder_close(d);
+mpc_reader_exit_stdio(&reader);
+```
+
+See `docs/api.md` for the full API, ownership rules, error codes, and the
+reader design. The decoder also builds to WebAssembly (Emscripten) and powers
+the two browser front-ends above:
+
+```sh
+emcmake cmake -S . -B build-wasm && cmake --build build-wasm
+```
+
+- The **MusicPack web client** (`web/`) decodes `.mpc` over HTTP Range with a
+  demand-driven reader; see `web/README.md`.
+- The low-level WASM demo (`demo/`, Phase 5) is a development/test artifact
+  kept for the demand-reader plumbing.
 
 ## Tools
 
@@ -194,6 +266,7 @@ is `specs/musicpack-api-v1.md`. The web client is documented in
 | `mpcgain`  | Compute ReplayGain (requires libreplaygain)                    |
 | `mpcchap`  | Read/write SV8 chapters (requires libcuefile)                  |
 | `wavcmp`   | Compare two WAV files                                          |
+| `musicpack` | Author and verify `.mpack` albums (`info`, `create`, `import`, `identify`, `update-metadata`, `verify`) |
 | `musicpack-server` | Index a `.mpack` library and serve it over HTTP API v1 (requires libmicrohttpd) |
 
 ## Testing
@@ -231,17 +304,18 @@ ctest --test-dir build
 
 ## Layout
 
-- `include/mpc/` — historical public headers (installed)
-- `include/musepack/` — stable `libmusepack` public API
-- `libmpcdec/` — SV7/SV8 decoder + `musepack_decoder` facade
+- `libmpcdec/` — SV7/SV8 decoder + `musepack_decoder` facade (the codec)
 - `libmpcenc/` — SV8 encoder core
 - `libmpcpsy/` — psychoacoustic model
 - `libwavformat/` — WAV read/write helper
+- `include/musepack/` — stable `libmusepack` public API
+- `include/mpc/` — historical public headers (installed for compatibility)
 - `libmusicpack/` — `.mpack` package library (`libmusicpack`)
 - `musicpack/` — `musicpack` CLI
 - `server/` — `musicpack-server`: scanner, SQLite collector library, HTTP API v1, direct streaming (vendored SQLite in `server/vendor/`)
+- `web/` — the Phase 6 web client (Svelte 5 + Vite + TS): the digital record shelf
 - `wasm/` — Emscripten build of the decoder + WASM wrapper + smoke test
-- `demo/` — browser playback proof-of-concept
+- `demo/` — low-level browser playback proof-of-concept
 - `specs/` — `.mpack` v1 spec + JSON Schema, and the server API spec (`musicpack-api-v1.md`)
 - `common/` — shared sources (crc32, fast-math tables, tag handling)
 - `tests/` — fixture generator, corpus generator, and regression harnesses
@@ -249,5 +323,7 @@ ctest --test-dir build
 
 ## License
 
-`libmpcdec` is BSD-licensed; `libmpcenc`, `libmpcpsy`, and the tools are
-LGPL-licensed. See `LICENSE` for details.
+The codec layer: `libmpcdec` is BSD-licensed; `libmpcenc`, `libmpcpsy`, and the
+codec tools are LGPL-licensed. The MusicPack layer (`libmusicpack`, the
+`musicpack` CLI, and `musicpack-server`) is BSD 3-clause licensed. See
+`LICENSE` for details.
