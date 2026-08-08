@@ -67,11 +67,19 @@ mpc_reader_exit_stdio(&reader);
 ```
 
 See `docs/api.md` for the full API, ownership rules, error codes, and the
-reader design. The decoder also builds to WebAssembly (Emscripten) and ships
-with a browser playback demo:
+reader design. The decoder also builds to WebAssembly (Emscripten) and powers two browser
+front-ends:
+
+- **The MusicPack web client** (`web/`, Phase 6) — the first-party "digital
+  record shelf": an authenticated album/edition browser with Musepack
+  demand-driven playback, BS.1770 album normalization, gapless transitions,
+  Media Session, and a responsive record-collection UI. `web/README.md`
+  documents the stack decision and the `npm run dev`/`npm run build` workflow.
+- The low-level WASM demo (`demo/`, Phase 5) — a development/test artifact
+  kept for the demand-reader plumbing.
 
 - WASM: `emcmake cmake -S . -B build-wasm && cmake --build build-wasm`
-- Demo: `demo/README.md` (build, serve, play an `.mpc` in a browser)
+- Web client: `web/README.md` (build, serve, run the Vitest/Playwright suites)
 
 ## libmusicpack — the `.mpack` package model
 
@@ -163,14 +171,17 @@ musicpack-server token create --name "Web" | token list | token revoke <id>
   `sha256`; a strong `ETag` (the manifest hash) enables `If-None-Match` →
   `304`. MIME and codec (`musepack-sv8`, …) are reported separately and
   derived server-side.
-- **Browser streaming** — `--static-dir DIR` serves the reference demo with
-  cross-origin isolation (COOP/COEP); the demo plays a server track with a
-  demand-driven reader (SharedArrayBuffer + Atomics + a network worker with a
-  block cache), fetching only the compressed ranges the decoder needs.
+- **Browser streaming** — `--static-dir DIR` serves static files with
+  cross-origin isolation (COOP/COEP). Point it at the built web client
+  (`web/app/dist`) to get the first-party record shelf at the server root; the
+  client streams Musepack through a demand-driven reader (SharedArrayBuffer +
+  Atomics + a network worker with a block cache), fetching only the compressed
+  ranges the decoder needs, so playback starts before the file downloads and
+  seeking never fetches the whole file.
 
 Defaults are safe: loopback binding, no remote access implied. The API spec
-is `specs/musicpack-api-v1.md`. The browser demo is documented in
-`demo/README.md`.
+is `specs/musicpack-api-v1.md`. The web client is documented in
+`web/README.md`; the low-level WASM demo in `demo/README.md`.
 
 ## Tools
 
@@ -201,7 +212,16 @@ bit-identical output with the pristine reference encoder (compared live
 against a reference build on CI, with a committed manifest as the local
 fallback). The Emscripten build registers an additional `wasm_smoke` suite
 (including the demand-driven range-reader path: PCM identity, a seek-to-90%
-fetch-accounting check, and network-failure injection):
+fetch-accounting check, and network-failure injection) and the
+`web_wasm_gapless` suite (the web client's audio guarantees: gapless
+two-track continuity, exact track-end frames, demand-reader seek accounting).
+
+The web client adds its own suites (`web/`): Vitest units for the controller,
+queue, ring buffer, loudness math, API client and session; a Playwright
+browser suite (authenticate → shelf → album → edition switch → Musepack and
+native playback → seek → gapless → queue → Media Session → 401 re-auth) run
+in the CI `web-client` job; and a performance report script. See
+`web/README.md`.
 
 ```sh
 cmake -S . -B build -DMPC_BUILD_TESTS=ON
